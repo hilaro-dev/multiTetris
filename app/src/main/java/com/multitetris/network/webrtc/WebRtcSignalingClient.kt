@@ -174,7 +174,8 @@ class WebRtcSignalingClient(
         }
         _connectedPeerUids.value = emptySet()
 
-        val guests = room.resolvedPlayers().filter { it.uid != room.hostUid && it.uid.isNotBlank() }
+        val guests = room.resolvedPlayers()
+            .filter { it.uid != room.hostUid && it.uid.isNotBlank() && !it.isBot && !it.uid.startsWith("bot_p") }
         val statusText = if (room.myRole == MatchRole.HOST && guests.isEmpty()) {
             "Room ready — invite up to 3 friends..."
         } else {
@@ -218,7 +219,8 @@ class WebRtcSignalingClient(
             notifyMatchStarted(updatedRoom)
         } else if (_signalState.value is WebRtcSignalState.Connecting) {
             val connectedCount = _connectedPeerUids.value.size
-            val totalGuests = (updatedRoom.resolvedPlayers().size - 1).coerceAtLeast(0)
+            val totalGuests = updatedRoom.resolvedPlayers()
+                .count { it.uid != updatedRoom.hostUid && it.uid.isNotBlank() && !it.isBot && !it.uid.startsWith("bot_p") }
             val status = if (updatedRoom.myRole == MatchRole.HOST) {
                 if (totalGuests == 0) {
                     "Room ready — invite up to 3 friends..."
@@ -243,7 +245,7 @@ class WebRtcSignalingClient(
         if (sessionCounter.get() != token) return
 
         val desiredGuests = room.resolvedPlayers()
-            .filter { it.uid != room.hostUid && it.uid.isNotBlank() }
+            .filter { it.uid != room.hostUid && it.uid.isNotBlank() && !it.isBot && !it.uid.startsWith("bot_p") }
             .take(MAX_GUEST_PEERS)
         val desiredUids = desiredGuests.map { it.uid }.toSet()
 
@@ -275,7 +277,11 @@ class WebRtcSignalingClient(
         if (room.state != "playing" && room.state != "signaling") return
         if (_signalState.value is WebRtcSignalState.Connected) return
         val anyOpen = peerSlots.values.any { it.isOpen() }
-        if (anyOpen || _connectedPeerUids.value.isNotEmpty()) {
+        val nonHostPlayers = room.resolvedPlayers().filter { it.uid != room.hostUid && it.uid.isNotBlank() }
+        val hasOnlyBots = room.myRole == MatchRole.HOST &&
+            nonHostPlayers.isNotEmpty() &&
+            nonHostPlayers.all { it.isBot || it.uid.startsWith("bot_p") }
+        if (anyOpen || _connectedPeerUids.value.isNotEmpty() || hasOnlyBots) {
             Log.d(TAG, "Transitioning to Connected [${room.myRole}] matchId=${room.matchId}")
             _signalState.value = WebRtcSignalState.Connected(room)
         }
@@ -725,7 +731,9 @@ class WebRtcSignalingClient(
         if (room.state != "lobby") {
             _signalState.value = WebRtcSignalState.Connected(room)
         } else if (_signalState.value is WebRtcSignalState.Connecting) {
-            val totalGuests = (room.resolvedPlayers().size - 1).coerceAtLeast(1)
+            val totalGuests = room.resolvedPlayers()
+                .count { it.uid != room.hostUid && it.uid.isNotBlank() && !it.isBot && !it.uid.startsWith("bot_p") }
+                .coerceAtLeast(1)
             val status = if (isHostSide) {
                 "Connected to ${_connectedPeerUids.value.size} / $totalGuests friend(s)"
             } else {

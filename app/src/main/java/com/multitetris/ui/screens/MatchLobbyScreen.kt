@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.multitetris.game.BotDifficulty
 import com.multitetris.game.GameMode
 import com.multitetris.game.SabotageConfig
 import com.multitetris.game.SabotageType
@@ -103,6 +104,10 @@ fun MatchLobbyScreen(
     onSetMysteryEnabled: (Boolean) -> Unit = {},
     onToggleSabotage: (SabotageType) -> Unit = {},
     onSwapPlayerTeam: (String) -> Unit = {},
+    botDifficulty: BotDifficulty = BotDifficulty.NORMAL,
+    onAddBot: (Int) -> Unit = {},
+    onRemoveBot: (Int) -> Unit = {},
+    onSelectBotDifficulty: (BotDifficulty) -> Unit = {},
     onStartMatch: () -> Unit = {},
     onCancelLobby: () -> Unit
 ) {
@@ -243,6 +248,8 @@ fun MatchLobbyScreen(
                         showTeams = isTwoVTwoActive,
                         showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[2]?.let { onSwapPlayerTeam(it.uid) } },
+                        onAddBot = { onAddBot(2) },
+                        onRemoveBot = { onRemoveBot(2) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -259,6 +266,8 @@ fun MatchLobbyScreen(
                         showTeams = isTwoVTwoActive,
                         showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[3]?.let { onSwapPlayerTeam(it.uid) } },
+                        onAddBot = { onAddBot(3) },
+                        onRemoveBot = { onRemoveBot(3) },
                         modifier = Modifier.weight(1f)
                     )
                     LobbySlotGridItem(
@@ -270,8 +279,52 @@ fun MatchLobbyScreen(
                         showTeams = isTwoVTwoActive,
                         showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[4]?.let { onSwapPlayerTeam(it.uid) } },
+                        onAddBot = { onAddBot(4) },
+                        onRemoveBot = { onRemoveBot(4) },
                         modifier = Modifier.weight(1f)
                     )
+                }
+
+                if (isHost && resolvedPlayers.any { it.isBot || it.uid.startsWith("bot_p") }) {
+                    val strings = LocalStrings.current
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.botDifficultyTitle,
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                BotDifficulty.EASY to strings.botDifficultyEasy,
+                                BotDifficulty.NORMAL to strings.botDifficultyNormal,
+                                BotDifficulty.HARD to strings.botDifficultyHard
+                            ).forEach { (diff, label) ->
+                                val selected = botDifficulty == diff
+                                Surface(
+                                    onClick = { onSelectBotDifficulty(diff) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (selected) modeAccent.copy(alpha = 0.2f) else SlateSurface,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (selected) modeAccent else SubtleBorder
+                                    )
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (selected) modeAccent else TextSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -515,7 +568,11 @@ fun MatchLobbyScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (isHost) {
-                    val canStart = resolvedPlayers.size >= 2 && connectedPeerUids.isNotEmpty()
+                    val nonHostHumanGuests = resolvedPlayers.filter {
+                        it.uid != room.hostUid && !it.isBot && !it.uid.startsWith("bot_p")
+                    }
+                    val allHumanGuestsConnected = nonHostHumanGuests.all { it.uid in connectedPeerUids }
+                    val canStart = resolvedPlayers.size >= 2 && allHumanGuestsConnected
                     Button(
                         onClick = onStartMatch,
                         enabled = canStart,
@@ -539,7 +596,7 @@ fun MatchLobbyScreen(
                         Text(
                             text = when {
                                 resolvedPlayers.size < 2 -> strings.needMorePlayersToStart
-                                connectedPeerUids.isEmpty() -> strings.connectingToHost
+                                !allHumanGuestsConnected -> strings.connectingToHost
                                 else -> "${strings.startMatch} (${resolvedPlayers.size})"
                             },
                             fontWeight = FontWeight.ExtraBold,
@@ -628,6 +685,7 @@ private fun isSlotP2pReady(
     connectedPeerUids: Set<String>
 ): Boolean {
     if (slot == null) return false
+    if (slot.isBot || slot.uid.startsWith("bot_p")) return true
     if (room.myRole == MatchRole.HOST) {
         return slotIndex == 1 || slot.uid in connectedPeerUids
     }
@@ -644,8 +702,11 @@ private fun LobbySlotGridItem(
     showTeams: Boolean,
     showSabotages: Boolean = false,
     onSwapTeam: () -> Unit,
+    onAddBot: () -> Unit = {},
+    onRemoveBot: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalStrings.current
     val slotAccent = if (showTeams && player != null) {
         if (player.team == TeamColor.MAGENTA) NeonMagenta else CyberCyan
     } else {
@@ -689,16 +750,34 @@ private fun LobbySlotGridItem(
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    text = LocalStrings.current.waitingForPlayer,
-                    color = TextSecondary.copy(alpha = 0.7f),
-                    fontSize = 10.sp
-                )
+                if (isHostViewing && slotIndex in 2..4) {
+                    Surface(
+                        onClick = onAddBot,
+                        shape = RoundedCornerShape(8.dp),
+                        color = slotAccent.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, slotAccent.copy(alpha = 0.45f))
+                    ) {
+                        Text(
+                            text = strings.addBotLabel,
+                            color = slotAccent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = strings.waitingForPlayer,
+                        color = TextSecondary.copy(alpha = 0.7f),
+                        fontSize = 10.sp
+                    )
+                }
             }
         }
         return
     }
 
+    val isBotPlayer = player.isBot || player.uid.startsWith("bot_p")
     val renderer = SkinRegistry.resolve(player.skinId)
     val previewType = when (slotIndex) {
         1 -> TetrominoType.I
@@ -730,23 +809,57 @@ private fun LobbySlotGridItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = buildString {
-                        val strings = LocalStrings.current
-                        append(if (slotIndex == 1) strings.hostTag else "P$slotIndex")
-                        if (isMe) append(" • ${strings.youTag}")
-                    },
-                    color = slotAccent,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                val readyColor = if (isPeerConnected) Color(0xFF2FE066) else ElectricGold
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(readyColor)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = buildString {
+                            append(if (slotIndex == 1) strings.hostTag else "P$slotIndex")
+                            if (isMe) append(" • ${strings.youTag}")
+                        },
+                        color = slotAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    if (isBotPlayer) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = slotAccent.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = strings.botBadge,
+                                color = slotAccent,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (isBotPlayer && isHostViewing) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = strings.removeBotContentDesc,
+                            tint = TextSecondary,
+                            modifier = Modifier
+                                .size(15.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onRemoveBot)
+                        )
+                    }
+                    val readyColor = if (isPeerConnected) Color(0xFF2FE066) else ElectricGold
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(readyColor)
+                    )
+                }
             }
 
             Row(

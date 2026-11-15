@@ -200,7 +200,20 @@ fun MultiTetrisApp(
                         gameViewModel.playMatchStartSound()
                         gameViewModel.startLocalTestGame(playerCount, subMode)
                         navController.navigate(Routes.GAME)
-                    }
+                    },
+                    onStartSingleplayerBot = { mode, sabotageEnabled, mysteryEnabled, difficulty, sabotages ->
+                        gameViewModel.playMatchStartSound()
+                        gameViewModel.startSingleplayerBotGame(
+                            mode = mode,
+                            sabotageEnabled = sabotageEnabled,
+                            mysteryEnabled = mysteryEnabled,
+                            botDifficulty = difficulty,
+                            selectedSabotages = sabotages
+                        )
+                        navController.navigate(Routes.GAME)
+                    },
+                    onAcceptRoomInvite = gameViewModel::acceptRoomInvite,
+                    onDeclineRoomInvite = gameViewModel::declineRoomInvite
                 )
             }
 
@@ -229,6 +242,10 @@ fun MultiTetrisApp(
                         onSetMysteryEnabled = gameViewModel::setRoomMysteryEnabled,
                         onToggleSabotage = gameViewModel::toggleMySabotageSelection,
                         onSwapPlayerTeam = gameViewModel::swapPlayerTeam,
+                        botDifficulty = uiState.lobbyBotDifficulty,
+                        onAddBot = gameViewModel::addBotToLobbySlot,
+                        onRemoveBot = gameViewModel::removeBotFromLobbySlot,
+                        onSelectBotDifficulty = gameViewModel::setLobbyBotDifficulty,
                         onStartMatch = gameViewModel::startRoomMatch,
                         onCancelLobby = {
                             gameViewModel.cancelPlayTogetherSearch()

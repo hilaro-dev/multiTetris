@@ -1,12 +1,14 @@
 package com.multitetris.network
 
 import com.multitetris.game.BoardConfig
+import com.multitetris.game.BotDifficulty
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
 import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
+import com.multitetris.game.TetrisBotController
 import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +36,8 @@ class LocalSimulationSessionController(
     private val engineLock = Any()
     private val lastDropTimeMs = mutableMapOf<Int, Long>()
     private var tickerJob: Job? = null
+    private var botJob: Job? = null
+    private var botController: TetrisBotController? = null
 
     private val _sessionState = MutableStateFlow(NetworkSessionState())
     override val sessionState: StateFlow<NetworkSessionState> = _sessionState.asStateFlow()
@@ -98,6 +102,67 @@ class LocalSimulationSessionController(
         startGravityTicker()
     }
 
+    fun startSingleplayerVsBot(
+        mode: GameMode,
+        playerSkins: Map<Int, String>,
+        sabotageEnabled: Boolean,
+        equippedSabotages: Map<Int, List<SabotageType>>,
+        mysteryEnabled: Boolean,
+        botDifficulty: BotDifficulty,
+        humanNickname: String
+    ) {
+        stop()
+        val config = BoardConfig.forPlayerCount(2)
+        val now = clockMillis()
+        val initialState = synchronized(engineLock) {
+            lastDropTimeMs.clear()
+            for (zone in config.spawnZones) {
+                lastDropTimeMs[zone.playerId] = now
+            }
+            engine.startNewGame(
+                mode = mode,
+                config = config,
+                playerSkins = playerSkins,
+                currentTimeMillis = now,
+                versusSubMode = VersusSubMode.FREE_FOR_ALL,
+                playerTeams = emptyMap(),
+                sabotageEnabled = sabotageEnabled,
+                equippedSabotages = equippedSabotages,
+                mysteryEnabled = mysteryEnabled
+            )
+        }
+
+        val playerEndpoints = listOf(
+            PlayerEndpointState(
+                playerId = 1,
+                displayName = humanNickname.ifBlank { "You" },
+                isLocalController = true,
+                latencyMs = 0
+            ),
+            PlayerEndpointState(
+                playerId = 2,
+                displayName = "Bot",
+                isLocalController = false,
+                latencyMs = 0
+            )
+        )
+
+        _sessionState.update {
+            NetworkSessionState(
+                sessionMode = SessionMode.LOCAL_SIMULATION,
+                status = ConnectionStatus.READY_LOCAL,
+                controlledPlayerId = 1,
+                players = playerEndpoints,
+                activeSabotagedPlayerIds = emptySet()
+            )
+        }
+        _gameState.value = initialState
+        val controller = TetrisBotController(botPlayerId = 2, difficulty = botDifficulty)
+        botController = controller
+        startGravityTicker()
+        startBotTicker(controller, botDifficulty)
+    }
+
     override fun dispatchAction(playerId: Int, action: PlayerAction) {
         val now = clockMillis()
         val updated = synchronized(engineLock) {
@@ -125,7 +190,8 @@ class LocalSimulationSessionController(
 
     override fun switchControlledPlayer(playerId: Int) {
         _sessionState.update { current ->
-            if (current.players.any { it.playerId == playerId }) {
+            val target = current.players.firstOrNull { it.playerId == playerId }
+            if (target != null && target.isLocalController) {
                 current.copy(controlledPlayerId = playerId)
             } else {
                 current
@@ -159,8 +225,40 @@ class LocalSimulationSessionController(
     override fun stop() {
         tickerJob?.cancel()
         tickerJob = null
+        botJob?.cancel()
+        botJob = null
+        botController = null
         _gameState.value = GameState()
         _sessionState.value = NetworkSessionState()
+    }
+
+    private fun startBotTicker(controller: TetrisBotController, difficulty: BotDifficulty) {
+        botJob?.cancel()
+        botJob = scope.launch {
+            while (isActive) {
+                delay(difficulty.stepDelayMs)
+                val now = clockMillis()
+                val snapshot = synchronized(engineLock) { engine.state }
+                if (snapshot.isPaused || snapshot.isGameOver) continue
+
+                controller.maybeSelectSabotage(snapshot, now)?.let { (targetId, sab) ->
+                    val updated = synchronized(engineLock) {
+                        engine.useSabotage(
+                            attackerPlayerId = 2,
+                            targetPlayerId = targetId,
+                            sabotageType = sab,
+                            attackerLabel = "Bot"
+                        )
+                    }
+                    publishState(updated, now)
+                }
+
+                val latestSnapshot = synchronized(engineLock) { engine.state }
+                controller.nextAction(latestSnapshot)?.let { action ->
+                    dispatchAction(2, action)
+                }
+            }
+        }
     }
 
     private fun startGravityTicker() {

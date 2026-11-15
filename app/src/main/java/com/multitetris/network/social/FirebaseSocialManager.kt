@@ -945,6 +945,8 @@ class FirebaseSocialManager(
                     val team = runCatching { TeamColor.valueOf(teamRaw.orEmpty()) }
                         .getOrDefault(if (slotIndex <= 2) TeamColor.CYAN else TeamColor.MAGENTA)
                     val ready = playerSnap.child("ready").getValue(Boolean::class.java) ?: true
+                    val isBot = playerSnap.child("isBot").getValue(Boolean::class.java)
+                        ?: pUid.startsWith("bot_p")
                     val parsedSabotages = playerSnap.child("sabotages").children.mapNotNull { sabSnap ->
                         runCatching {
                             SabotageType.valueOf(sabSnap.getValue(String::class.java).orEmpty())
@@ -962,7 +964,8 @@ class FirebaseSocialManager(
                         slotIndex = slotIndex,
                         team = team,
                         ready = ready,
-                        selectedSabotages = selectedSabotages
+                        selectedSabotages = selectedSabotages,
+                        isBot = isBot
                     )
                 }.sortedBy { it.slotIndex }
 
@@ -1111,6 +1114,55 @@ class FirebaseSocialManager(
             .child(targetUid)
             .child("team")
             .setValue(nextTeam.name)
+    }
+
+    fun addBotToSlot(slotIndex: Int) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST || slotIndex !in 2..4) return
+        if (room.resolvedPlayers().any { it.slotIndex == slotIndex }) return
+
+        val botUid = "bot_p$slotIndex"
+        val botIndex = slotIndex - 1
+        val botSkins = listOf("neon_cyber", "gold", "pixel")
+        val skinId = botSkins[(slotIndex - 2) % botSkins.size]
+        val team = if (slotIndex <= 2) TeamColor.CYAN else TeamColor.MAGENTA
+        val sabotages = SabotageType.entries.shuffled()
+            .take(SabotageConfig.MAX_DRAFT_SLOTS)
+            .map { it.name }
+
+        val botPayload = mapOf(
+            "uid" to botUid,
+            "nickname" to "Bot $botIndex",
+            "skinId" to skinId,
+            "slotIndex" to slotIndex,
+            "team" to team.name,
+            "ready" to true,
+            "isBot" to true,
+            "sabotages" to sabotages
+        )
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("players")
+            .child(botUid)
+            .setValue(botPayload)
+    }
+
+    fun removeBotFromSlot(slotIndex: Int) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST || slotIndex !in 2..4) return
+        val botSlot = room.resolvedPlayers().firstOrNull {
+            it.slotIndex == slotIndex && (it.isBot || it.uid.startsWith("bot_p"))
+        } ?: return
+
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("players")
+            .child(botSlot.uid)
+            .removeValue()
     }
 
     fun startRoomMatch() {

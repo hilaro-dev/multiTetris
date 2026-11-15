@@ -115,7 +115,8 @@ data class RoomPlayerSlot(
     val slotIndex: Int = 1,
     val team: TeamColor = TeamColor.NONE,
     val ready: Boolean = true,
-    val selectedSabotages: List<SabotageType> = SabotageConfig.defaultLoadout
+    val selectedSabotages: List<SabotageType> = SabotageConfig.defaultLoadout,
+    val isBot: Boolean = false
 )
 
 data class MatchRoom(

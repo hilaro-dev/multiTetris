@@ -11,6 +11,7 @@ import com.multitetris.economy.EconomyUiState
 import com.multitetris.economy.MatchRewardBreakdown
 import com.multitetris.economy.MatchRewardCalculator
 import com.multitetris.game.BoardConfig
+import com.multitetris.game.BotDifficulty
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
@@ -70,7 +71,8 @@ data class MultiTetrisUiState(
     val soundEnabled: Boolean = true,
     val musicEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
-    val languageCode: String = "en"
+    val languageCode: String = "en",
+    val lobbyBotDifficulty: BotDifficulty = BotDifficulty.NORMAL
 ) {
     val controlledPlayerId: Int get() = networkState.controlledPlayerId
 }
@@ -96,6 +98,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     private val _isMultiplayerSession = MutableStateFlow(false)
+    private val _lobbyBotDifficulty = MutableStateFlow(BotDifficulty.NORMAL)
     private val _isMuted = MutableStateFlow(false)
     private val _settings = MutableStateFlow(AppSettingsSnapshot())
     private val _lastMatchReward = MutableStateFlow<MatchRewardBreakdown?>(null)
@@ -116,8 +119,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private var lastLobbyMatchId: String? = null
     private var lastLobbyPlayerCount: Int = 0
 
+    private data class BotMatchConfig(
+        val mode: GameMode,
+        val sabotageEnabled: Boolean,
+        val mysteryEnabled: Boolean,
+        val botDifficulty: BotDifficulty,
+        val playerSabotages: List<SabotageType>
+    )
+
     private var lastLocalPlayerCount: Int = 2
     private var lastLocalVersusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL
+    private var lastBotMatchConfig: BotMatchConfig? = null
 
     private val activeGameStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
         if (isMultiplayer) webRtcSessionController.gameState else localSessionController.gameState
@@ -386,7 +398,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         webRtcCombinedFlow,
         _isMultiplayerSession,
         audioAndSettingsFlow,
-        statsCombinedFlow
+        statsCombinedFlow,
+        _lobbyBotDifficulty
     ) { values ->
         val mode = values[0] as GameMode
         @Suppress("UNCHECKED_CAST")
@@ -405,6 +418,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val settings = audioSettingsPair.second
         @Suppress("UNCHECKED_CAST")
         val statsPair = values[10] as Pair<CareerStatsSnapshot, Boolean>
+        val lobbyBotDiff = values[11] as BotDifficulty
 
         val syncedSkins = if (!isMultiplayer &&
             social.userProfile.selectedSkinId.isNotBlank() &&
@@ -434,7 +448,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             soundEnabled = settings.soundEnabled,
             musicEnabled = settings.musicEnabled,
             vibrationEnabled = settings.vibrationEnabled,
-            languageCode = settings.languageCode
+            languageCode = settings.languageCode,
+            lobbyBotDifficulty = lobbyBotDiff
         )
     }.stateIn(
         scope = viewModelScope,
@@ -515,6 +530,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         lastLocalPlayerCount = clampedCount
         lastLocalVersusSubMode = resolvedSubMode
+        lastBotMatchConfig = null
 
         webRtcSessionController.stop()
         connectedMatchId = null
@@ -547,11 +563,71 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun startSingleplayerBotGame(
+        mode: GameMode,
+        sabotageEnabled: Boolean,
+        mysteryEnabled: Boolean,
+        botDifficulty: BotDifficulty,
+        selectedSabotages: List<SabotageType>
+    ) {
+        val config = BotMatchConfig(
+            mode = mode,
+            sabotageEnabled = sabotageEnabled,
+            mysteryEnabled = mysteryEnabled,
+            botDifficulty = botDifficulty,
+            playerSabotages = selectedSabotages
+        )
+        lastBotMatchConfig = config
+        _selectedMode.value = mode
+
+        webRtcSessionController.stop()
+        connectedMatchId = null
+        _isMultiplayerSession.value = false
+        resetMatchTracking()
+
+        val baseSkins = uiState.value.selectedSkins
+        val mergedSkins = mapOf(
+            1 to (baseSkins[1] ?: GameState.defaultSkinForPlayer(1)),
+            2 to (baseSkins[2] ?: GameState.defaultSkinForPlayer(2))
+        )
+        val player1Sabotages = if (selectedSabotages.isNotEmpty()) {
+            selectedSabotages.take(SabotageConfig.MAX_DRAFT_SLOTS)
+        } else {
+            SabotageConfig.defaultLoadout
+        }
+        val botSabotages = SabotageType.entries.shuffled().take(SabotageConfig.MAX_DRAFT_SLOTS)
+        val humanName = uiState.value.socialState.userProfile.nickname.ifBlank { "You" }
+
+        localSessionController.startSingleplayerVsBot(
+            mode = mode,
+            playerSkins = mergedSkins,
+            sabotageEnabled = sabotageEnabled,
+            equippedSabotages = mapOf(
+                1 to player1Sabotages,
+                2 to botSabotages
+            ),
+            mysteryEnabled = mysteryEnabled,
+            botDifficulty = botDifficulty,
+            humanNickname = humanName
+        )
+    }
+
     fun restartGame() {
         if (_isMultiplayerSession.value) {
             webRtcSessionController.requestRematch()
         } else {
-            startLocalTestGame(lastLocalPlayerCount, lastLocalVersusSubMode)
+            val botConfig = lastBotMatchConfig
+            if (botConfig != null) {
+                startSingleplayerBotGame(
+                    mode = botConfig.mode,
+                    sabotageEnabled = botConfig.sabotageEnabled,
+                    mysteryEnabled = botConfig.mysteryEnabled,
+                    botDifficulty = botConfig.botDifficulty,
+                    selectedSabotages = botConfig.playerSabotages
+                )
+            } else {
+                startLocalTestGame(lastLocalPlayerCount, lastLocalVersusSubMode)
+            }
         }
     }
 
@@ -747,6 +823,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun swapPlayerTeam(targetUid: String) {
         socialManager.swapPlayerTeam(targetUid)
+    }
+
+    fun addBotToLobbySlot(slotIndex: Int) {
+        socialManager.addBotToSlot(slotIndex)
+    }
+
+    fun removeBotFromLobbySlot(slotIndex: Int) {
+        socialManager.removeBotFromSlot(slotIndex)
+    }
+
+    fun setLobbyBotDifficulty(difficulty: BotDifficulty) {
+        _lobbyBotDifficulty.value = difficulty
+        webRtcSessionController.setBotDifficulty(difficulty)
     }
 
     fun startRoomMatch() {

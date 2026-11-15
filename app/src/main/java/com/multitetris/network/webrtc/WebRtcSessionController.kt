@@ -2,11 +2,13 @@ package com.multitetris.network.webrtc
 
 import android.content.Context
 import com.multitetris.game.BoardConfig
+import com.multitetris.game.BotDifficulty
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
 import com.multitetris.game.TeamColor
+import com.multitetris.game.TetrisBotController
 import com.multitetris.game.VersusSubMode
 import com.multitetris.network.ConnectionStatus
 import com.multitetris.network.GameSessionController
@@ -65,6 +67,13 @@ class WebRtcSessionController(
     private val syncedNames = ConcurrentHashMap<Int, String>()
     private val syncedSabotages = ConcurrentHashMap<Int, List<com.multitetris.game.SabotageType>>()
     private val activeUidsBySlot = ConcurrentHashMap<Int, String>()
+    private var botDifficulty: BotDifficulty = BotDifficulty.NORMAL
+    private val botControllers = ConcurrentHashMap<Int, TetrisBotController>()
+    private val lastBotActionTimeMs = ConcurrentHashMap<Int, Long>()
+
+    fun setBotDifficulty(difficulty: BotDifficulty) {
+        botDifficulty = difficulty
+    }
 
     private var observerJob: Job? = null
     private var packetJob: Job? = null
@@ -184,8 +193,19 @@ class WebRtcSessionController(
         }
         val initial = synchronized(engineLock) {
             lastDropTimeMs.clear()
+            botControllers.clear()
+            lastBotActionTimeMs.clear()
             for (zone in config.spawnZones) {
                 lastDropTimeMs[zone.playerId] = now
+            }
+            for (slot in room.resolvedPlayers()) {
+                if (slot.isBot || slot.uid.startsWith("bot_p")) {
+                    botControllers[slot.slotIndex] = TetrisBotController(
+                        botPlayerId = slot.slotIndex,
+                        difficulty = botDifficulty
+                    )
+                    lastBotActionTimeMs[slot.slotIndex] = now
+                }
             }
             tickCounter.set(0L)
             hostEngine.startNewGame(
@@ -199,6 +219,10 @@ class WebRtcSessionController(
                 equippedSabotages = resolvedEquipped,
                 mysteryEnabled = mysteryEnabled
             )
+        }
+        val nonHostPlayers = room.resolvedPlayers().filter { it.uid != room.hostUid && it.uid.isNotBlank() }
+        if (nonHostPlayers.isNotEmpty() && nonHostPlayers.all { it.isBot || it.uid.startsWith("bot_p") }) {
+            _sessionState.update { it.copy(status = ConnectionStatus.CONNECTED) }
         }
         publishHostStateAndBroadcast(initial, now, forceSend = true)
         startHostPhysicsLoop()
@@ -391,6 +415,8 @@ class WebRtcSessionController(
         peerLeftJob?.cancel()
         peerLeftJob = null
         signalingClient.close()
+        botControllers.clear()
+        lastBotActionTimeMs.clear()
         currentRoom = null
         _gameState.value = GameState()
         _sessionState.value = NetworkSessionState()
@@ -707,6 +733,32 @@ class WebRtcSessionController(
                                 lastDropTimeMs[playerId] = now
                                 workingState = hostEngine.stepPlayerDown(playerId, now)
                                 stateMutated = true
+                            }
+                        }
+
+                        // Host-driven AI ticks for any Bot slots in the room
+                        for ((botPlayerId, botController) in botControllers) {
+                            val lastBotAction = lastBotActionTimeMs[botPlayerId] ?: 0L
+                            if (now - lastBotAction >= botDifficulty.stepDelayMs) {
+                                lastBotActionTimeMs[botPlayerId] = now
+                                val sabChoice = botController.maybeSelectSabotage(workingState, now)
+                                if (sabChoice != null) {
+                                    workingState = hostEngine.useSabotage(
+                                        attackerPlayerId = botPlayerId,
+                                        targetPlayerId = sabChoice.first,
+                                        sabotageType = sabChoice.second,
+                                        attackerLabel = syncedNames[botPlayerId]
+                                    )
+                                    stateMutated = true
+                                }
+                                val botAction = botController.nextAction(workingState)
+                                if (botAction != null) {
+                                    workingState = hostEngine.applyAction(botPlayerId, botAction, now)
+                                    if (botAction == PlayerAction.SOFT_DROP || botAction == PlayerAction.HARD_DROP) {
+                                        lastDropTimeMs[botPlayerId] = now
+                                    }
+                                    stateMutated = true
+                                }
                             }
                         }
                         workingState

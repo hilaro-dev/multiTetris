@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Button
@@ -61,12 +62,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.economy.EconomyUiState
+import com.multitetris.game.BotDifficulty
 import com.multitetris.game.GameMode
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TetrominoType
 import com.multitetris.game.VersusSubMode
 import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.PresenceState
+import com.multitetris.network.social.RoomInvite
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.stats.CareerStatsSnapshot
 import com.multitetris.ui.i18n.LocalStrings
@@ -111,12 +115,23 @@ fun HomeScreen(
     onClearFriendFeedback: () -> Unit,
     onCreateRoom: () -> Unit,
     onCancelPlayTogetherSearch: () -> Unit,
-    onStartLocalTest: (playerCount: Int, subMode: VersusSubMode) -> Unit
+    onStartLocalTest: (playerCount: Int, subMode: VersusSubMode) -> Unit = { _, _ -> },
+    onStartSingleplayerBot: (
+        mode: GameMode,
+        sabotageEnabled: Boolean,
+        mysteryEnabled: Boolean,
+        botDifficulty: BotDifficulty,
+        selectedSabotages: List<SabotageType>
+    ) -> Unit = { _, _, _, _, _ -> },
+    onAcceptRoomInvite: (RoomInvite) -> Unit = {},
+    onDeclineRoomInvite: (RoomInvite) -> Unit = {}
 ) {
     var showFriendsSheet by remember { mutableStateOf(false) }
     var showMissionsSheet by remember { mutableStateOf(false) }
     var showStatsSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showSingleplayerSheet by remember { mutableStateOf(false) }
+    var showMultiplayerSheet by remember { mutableStateOf(false) }
     var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
     val strings = LocalStrings.current
 
@@ -168,27 +183,21 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Center Hero: Bold MultiTetris title + compact CO-OP / VERSUS segmented toggle
+            // Center Hero: Bold MultiTetris title
             Text(
                 text = "MultiTetris",
-                fontSize = 42.sp,
+                fontSize = 44.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = TextPrimary,
                 letterSpacing = (-0.8).sp
             )
             Text(
-                text = "Shared 10×20 Arena",
-                fontSize = 13.sp,
-                color = TextSecondary,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-
-            Spacer(modifier = Modifier.height(22.dp))
-
-            SegmentedModeToggle(
-                selectedMode = selectedMode,
-                onSelectMode = onSelectMode,
-                onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode, strings) }
+                text = strings.appSubtitle,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = CyberCyan,
+                letterSpacing = 1.4.sp,
+                modifier = Modifier.padding(top = 6.dp)
             )
 
             Spacer(modifier = Modifier.weight(1.1f))
@@ -277,47 +286,76 @@ fun HomeScreen(
                         }
                     }
 
+                    // Two prominent, balanced primary buttons: Singleplayer & Multiplayer
                     Button(
-                        onClick = onCreateRoom,
+                        onClick = { showSingleplayerSheet = true },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp),
+                            .height(62.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = modeAccent,
-                            contentColor = if (selectedMode == GameMode.VERSUS) Color.White else ObsidianBg
+                            containerColor = CyberCyan,
+                            contentColor = ObsidianBg
                         )
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.PlayArrow,
+                            imageVector = Icons.Rounded.SmartToy,
                             contentDescription = null,
                             modifier = Modifier.size(24.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(horizontalAlignment = Alignment.Start) {
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
+                        ) {
                             Text(
-                                text = if (languageCode == "tr") {
-                                    "${strings.gameModeLabel(selectedMode)} ODASI OLUŞTUR"
-                                } else {
-                                    "CREATE ${selectedMode.label} ROOM"
-                                },
+                                text = strings.singleplayerTitle.uppercase(),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp
+                            )
+                            Text(
+                                text = strings.singleplayerSubtitle,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Button(
+                        onClick = { showMultiplayerSheet = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(62.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonMagenta,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Groups,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = strings.multiplayerTitle.uppercase(),
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.5.sp
                             )
                             Text(
                                 text = if (onlineFriendsCount > 0) {
-                                    if (languageCode == "tr") {
-                                        "En fazla 3 arkadaş davet et ($onlineFriendsCount çevrimiçi)"
-                                    } else {
-                                        "Invite up to 3 friends ($onlineFriendsCount online)"
-                                    }
+                                    "${strings.multiplayerSubtitle} ($onlineFriendsCount ${strings.onlineLabel.lowercase()})"
                                 } else {
-                                    if (languageCode == "tr") {
-                                        "2–4 kişilik Oda Lobisi aç ve arkadaşlarını davet et"
-                                    } else {
-                                        "Open 2–4P Room Lobby & invite friends"
-                                    }
+                                    strings.multiplayerSubtitle
                                 },
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Medium
@@ -327,7 +365,7 @@ fun HomeScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Secondary Shop button
             OutlinedButton(
@@ -353,50 +391,29 @@ fun HomeScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Subtle Local Test selector at bottom (2P / 3P / 4P 2v2)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.SportsEsports,
-                    contentDescription = null,
-                    tint = TextSecondary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "Local Test:",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                TextButton(
-                    onClick = { onStartLocalTest(2, VersusSubMode.FREE_FOR_ALL) }
-                ) {
-                    Text("2P", color = CyberCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                TextButton(
-                    onClick = { onStartLocalTest(3, VersusSubMode.FREE_FOR_ALL) }
-                ) {
-                    Text("3P", color = ElectricGold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                TextButton(
-                    onClick = {
-                        val sub = if (selectedMode == GameMode.VERSUS) VersusSubMode.TEAMS_2V2 else VersusSubMode.FREE_FOR_ALL
-                        onStartLocalTest(4, sub)
-                    }
-                ) {
-                    Text(
-                        text = if (selectedMode == GameMode.VERSUS) "4P (2v2)" else "4P",
-                        color = NeonMagenta,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(12.dp))
         }
+    }
+
+    if (showSingleplayerSheet) {
+        SingleplayerSetupSheet(
+            initialMode = selectedMode,
+            onStartMatch = onStartSingleplayerBot,
+            onDismiss = { showSingleplayerSheet = false }
+        )
+    }
+
+    if (showMultiplayerSheet) {
+        MultiplayerEntrySheet(
+            selectedMode = selectedMode,
+            socialState = socialState,
+            onSelectMode = onSelectMode,
+            onCreateRoomLobby = onCreateRoom,
+            onAcceptRoomInvite = onAcceptRoomInvite,
+            onDeclineRoomInvite = onDeclineRoomInvite,
+            onOpenFriends = { showFriendsSheet = true },
+            onDismiss = { showMultiplayerSheet = false }
+        )
     }
 
     if (showFriendsSheet) {
@@ -655,7 +672,7 @@ private fun TopIconBadgeButton(
 }
 
 @Composable
-private fun SegmentedModeToggle(
+internal fun SegmentedModeToggle(
     selectedMode: GameMode,
     onSelectMode: (GameMode) -> Unit,
     onShowInfo: (GameMode) -> Unit
