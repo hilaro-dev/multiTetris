@@ -85,12 +85,15 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -1673,9 +1676,10 @@ fun TetrisBoardCanvas(
             }
         }
 
-        // 2. Draw ghost pieces for all active players
+        // 2. Draw ghost / drop shadow ONLY for the local player
         for (ghost in gameState.ghostPieces.values) {
-            if (gameState.mysteryEnabled && ghost.playerId == controlledPlayerId) {
+            if (ghost.playerId != controlledPlayerId) continue
+            if (gameState.mysteryEnabled) {
                 val ownerPiece = gameState.activePieces[ghost.playerId]
                 if (ownerPiece != null && gameState.isPieceHiddenByMystery(ownerPiece)) {
                     continue
@@ -1700,7 +1704,8 @@ fun TetrisBoardCanvas(
             }
         }
 
-        // 3. Draw active falling pieces for all players
+        // 3. Draw active falling pieces (100% opacity for local player, 45% opacity for others)
+        val opponentPiecePaint = Paint().apply { alpha = 0.45f }
         for (piece in gameState.activePieces.values) {
             val isHiddenMystery = gameState.isPieceHiddenByMystery(piece)
             if (piece.playerId == controlledPlayerId && isHiddenMystery) {
@@ -1711,42 +1716,57 @@ fun TetrisBoardCanvas(
             val isSabotaged = piece.playerId in sabotagedPlayers
 
             val occupied = piece.occupiedCells()
-            for (cell in occupied) {
-                if (cell.x in 0 until cols && cell.y in 0 until rows) {
-                    val topLeft = Offset(cell.x * cellW, cell.y * cellH)
-                    with(renderer) {
-                        drawBlockCell(
-                            topLeft = topLeft,
-                            size = cellSize,
-                            gridX = cell.x,
-                            gridY = cell.y,
-                            tetrominoType = piece.tetrominoType,
-                            playerId = piece.playerId,
-                            isGhost = false,
-                            isPausedOnPiece = piece.isPausedByPiece,
-                            animTimeMillis = animTimeMillis
-                        )
+            val drawPieceCells: () -> Unit = {
+                for (cell in occupied) {
+                    if (cell.x in 0 until cols && cell.y in 0 until rows) {
+                        val topLeft = Offset(cell.x * cellW, cell.y * cellH)
+                        with(renderer) {
+                            drawBlockCell(
+                                topLeft = topLeft,
+                                size = cellSize,
+                                gridX = cell.x,
+                                gridY = cell.y,
+                                tetrominoType = piece.tetrominoType,
+                                playerId = piece.playerId,
+                                isGhost = false,
+                                isPausedOnPiece = piece.isPausedByPiece,
+                                animTimeMillis = animTimeMillis
+                            )
+                        }
+                        if (isFocused) {
+                            drawRect(
+                                color = Color.White.copy(alpha = 0.55f),
+                                topLeft = Offset(topLeft.x + 1f, topLeft.y + 1f),
+                                size = Size(cellW - 2f, cellH - 2f),
+                                style = Stroke(width = 1.6f)
+                            )
+                        }
+                        if (isSabotaged) {
+                            drawRect(
+                                color = ElectricGold.copy(alpha = 0.24f * sabotagePulse),
+                                topLeft = Offset(topLeft.x - 2f, topLeft.y - 2f),
+                                size = Size(cellW + 4f, cellH + 4f)
+                            )
+                            drawRect(
+                                color = ElectricGold.copy(alpha = 0.92f * sabotagePulse),
+                                topLeft = Offset(topLeft.x + 1f, topLeft.y + 1f),
+                                size = Size(cellW - 2f, cellH - 2f),
+                                style = Stroke(width = 2.6f)
+                            )
+                        }
                     }
-                    if (isFocused) {
-                        drawRect(
-                            color = Color.White.copy(alpha = 0.55f),
-                            topLeft = Offset(topLeft.x + 1f, topLeft.y + 1f),
-                            size = Size(cellW - 2f, cellH - 2f),
-                            style = Stroke(width = 1.6f)
-                        )
-                    }
-                    if (isSabotaged) {
-                        drawRect(
-                            color = ElectricGold.copy(alpha = 0.24f * sabotagePulse),
-                            topLeft = Offset(topLeft.x - 2f, topLeft.y - 2f),
-                            size = Size(cellW + 4f, cellH + 4f)
-                        )
-                        drawRect(
-                            color = ElectricGold.copy(alpha = 0.92f * sabotagePulse),
-                            topLeft = Offset(topLeft.x + 1f, topLeft.y + 1f),
-                            size = Size(cellW - 2f, cellH - 2f),
-                            style = Stroke(width = 2.6f)
-                        )
+                }
+            }
+
+            if (isFocused) {
+                drawPieceCells()
+            } else {
+                drawIntoCanvas { canvas ->
+                    canvas.saveLayer(Rect(Offset.Zero, size), opponentPiecePaint)
+                    try {
+                        drawPieceCells()
+                    } finally {
+                        canvas.restore()
                     }
                 }
             }
