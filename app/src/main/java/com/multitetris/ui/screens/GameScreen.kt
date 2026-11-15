@@ -57,7 +57,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,6 +78,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.multitetris.economy.MatchRewardBreakdown
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
@@ -96,6 +102,7 @@ import com.multitetris.ui.theme.TextSecondary
 fun GameScreen(
     gameState: GameState,
     networkState: NetworkSessionState,
+    matchReward: MatchRewardBreakdown? = null,
     isMuted: Boolean = false,
     onToggleMute: () -> Unit = {},
     onSwitchFocus: () -> Unit,
@@ -225,6 +232,7 @@ fun GameScreen(
             } else if (gameState.isGameOver) {
                 GameOverOverlay(
                     gameState = gameState,
+                    matchReward = matchReward,
                     onPlayAgain = onRestart,
                     onExit = onExitToHome
                 )
@@ -919,6 +927,7 @@ private fun PauseOverlay(
 @Composable
 private fun GameOverOverlay(
     gameState: GameState,
+    matchReward: MatchRewardBreakdown?,
     onPlayAgain: () -> Unit,
     onExit: () -> Unit
 ) {
@@ -959,6 +968,11 @@ private fun GameOverOverlay(
             )
         }
 
+        if (matchReward != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            MatchRewardsCard(reward = matchReward)
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
 
         Button(
@@ -975,6 +989,105 @@ private fun GameOverOverlay(
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
             Text("Back to Home", color = TextPrimary)
+        }
+    }
+}
+
+@Composable
+private fun MatchRewardsCard(reward: MatchRewardBreakdown) {
+    var targetTotal by remember(reward) { mutableIntStateOf(0) }
+    LaunchedEffect(reward) {
+        targetTotal = reward.totalCoins
+    }
+    val animatedTotal by animateIntAsState(
+        targetValue = targetTotal,
+        animationSpec = tween(durationMillis = 750),
+        label = "match_reward_counter"
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = ElevatedCard),
+        border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "MATCH REWARDS",
+                    color = ElectricGold,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp
+                )
+                if (reward.isHalfRateLocal) {
+                    Text(
+                        text = "50% Local Rate",
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            if (reward.lines.isEmpty()) {
+                Text(
+                    text = reward.eligibilityReason ?: "No coins earned this round",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            } else {
+                reward.lines.forEach { line ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "+${line.amount} ${line.label}",
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "+${line.amount}",
+                            color = ElectricGold,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Total Earned",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Total: +$animatedTotal Coins",
+                        color = ElectricGold,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
         }
     }
 }

@@ -25,7 +25,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SportsEsports
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.multitetris.economy.EconomyUiState
 import com.multitetris.game.GameMode
 import com.multitetris.game.TetrominoType
 import com.multitetris.network.social.FriendRequest
@@ -77,8 +80,12 @@ fun HomeScreen(
     selectedMode: GameMode,
     selectedSkins: Map<Int, String>,
     socialState: SocialUiState,
+    economyState: EconomyUiState,
     onSelectMode: (GameMode) -> Unit,
     onSelectSkin: (playerId: Int, skinId: String) -> Unit,
+    onPurchaseSkin: (playerId: Int, skinId: String, price: Int) -> Unit,
+    onClaimMission: (String) -> Unit,
+    onRefreshMissions: () -> Unit,
     onUpdateNickname: (String) -> Unit,
     onAddFriendByCode: (String) -> Unit,
     onAcceptFriendRequest: (FriendRequest) -> Unit,
@@ -91,6 +98,7 @@ fun HomeScreen(
 ) {
     var showFriendsSheet by remember { mutableStateOf(false) }
     var showArmorySheet by remember { mutableStateOf(false) }
+    var showMissionsSheet by remember { mutableStateOf(false) }
 
     val onlineFriendsCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
     val searchingFriendsCount = socialState.friends.count { it.state == PresenceState.SEARCHING }
@@ -124,7 +132,19 @@ fun HomeScreen(
                 onOpenFriends = { showFriendsSheet = true }
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Coin Balance & Daily Missions bar
+            EconomyAndMissionsBar(
+                coinBalance = economyState.coinBalance,
+                claimableMissionCount = economyState.claimableMissionCount,
+                onOpenMissions = {
+                    onRefreshMissions()
+                    showMissionsSheet = true
+                }
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // App Title
             Text(
@@ -449,9 +469,106 @@ fun HomeScreen(
     if (showArmorySheet) {
         SkinsArmorySheet(
             selectedSkins = selectedSkins,
+            coinBalance = economyState.coinBalance,
+            unlockedSkins = economyState.unlockedSkins,
             onEquipSkin = onSelectSkin,
+            onPurchaseSkin = onPurchaseSkin,
             onDismiss = { showArmorySheet = false }
         )
+    }
+
+    if (showMissionsSheet) {
+        DailyMissionsSheet(
+            coinBalance = economyState.coinBalance,
+            missions = economyState.dailyMissions,
+            onClaimMission = onClaimMission,
+            onDismiss = { showMissionsSheet = false }
+        )
+    }
+}
+
+@Composable
+private fun EconomyAndMissionsBar(
+    coinBalance: Int,
+    claimableMissionCount: Int,
+    onOpenMissions: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = ElectricGold.copy(alpha = 0.14f),
+            border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.65f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MonetizationOn,
+                    contentDescription = "Coin Balance",
+                    tint = ElectricGold,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "$coinBalance Coins",
+                    color = ElectricGold,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable(onClick = onOpenMissions),
+            shape = RoundedCornerShape(50),
+            color = ElevatedCard,
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (claimableMissionCount > 0) ElectricGold else SubtleBorder
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.EmojiEvents,
+                    contentDescription = "Daily Missions",
+                    tint = ElectricGold,
+                    modifier = Modifier.size(17.dp)
+                )
+                Text(
+                    text = "Missions",
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (claimableMissionCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(NeonMagenta),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = claimableMissionCount.coerceAtMost(9).toString(),
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

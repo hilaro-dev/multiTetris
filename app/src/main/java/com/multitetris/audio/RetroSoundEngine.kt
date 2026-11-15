@@ -67,6 +67,14 @@ class RetroSoundEngine {
         )
     }
 
+    private val coinChimeClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(987.77, 1318.51),
+            noteDurationMs = 75,
+            volume = 0.32
+        )
+    }
+
     fun playMove() = enqueueClip(moveClip)
 
     fun playRotate() = enqueueClip(rotateClip)
@@ -82,6 +90,8 @@ class RetroSoundEngine {
     fun playSabotageBurst() = enqueueClip(sabotageClip)
 
     fun playGameOver() = enqueueClip(gameOverClip)
+
+    fun playCoinChime() = enqueueClip(coinChimeClip)
 
     fun shutdown() {
         runCatching { executor.shutdownNow() }

@@ -4,6 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.multitetris.audio.RetroSoundEngine
+import com.multitetris.economy.EconomyRepository
+import com.multitetris.economy.EconomyUiState
+import com.multitetris.economy.MatchRewardBreakdown
+import com.multitetris.economy.MatchRewardCalculator
 import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
@@ -41,6 +45,8 @@ data class MultiTetrisUiState(
     val gameState: GameState = GameState(),
     val networkState: NetworkSessionState = NetworkSessionState(),
     val socialState: SocialUiState = SocialUiState(),
+    val economyState: EconomyUiState = EconomyUiState(),
+    val lastMatchReward: MatchRewardBreakdown? = null,
     val webRtcSignalState: WebRtcSignalState = WebRtcSignalState.Idle,
     val isMultiplayerSession: Boolean = false,
     val isMuted: Boolean = false
@@ -55,6 +61,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val webRtcSessionController: WebRtcSessionController =
         MultiplayerSessionManager.getInstance(application.applicationContext)
     private val socialManager = FirebaseSocialManager(application.applicationContext)
+    private val economyRepository = EconomyRepository(application.applicationContext)
     private val soundEngine = RetroSoundEngine()
 
     private val _selectedMode = MutableStateFlow(GameMode.CO_OP)
@@ -66,10 +73,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     )
     private val _isMultiplayerSession = MutableStateFlow(false)
     private val _isMuted = MutableStateFlow(false)
+    private val _lastMatchReward = MutableStateFlow<MatchRewardBreakdown?>(null)
     private var connectedMatchId: String? = null
     private var lastPlayedClearEventId = 0L
     private var wasGameOver = false
     private var lastSabotagedIds: Set<Int> = emptySet()
+    private var matchStartedAtMillis: Long = System.currentTimeMillis()
+    private var rewardGrantedForCurrentMatch = false
+    private var lastRecordedLinesForMissions = 0
 
     private val activeGameStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
         if (isMultiplayer) webRtcSessionController.gameState else localSessionController.gameState
@@ -77,6 +88,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private val activeSessionStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
         if (isMultiplayer) webRtcSessionController.sessionState else localSessionController.sessionState
+    }
+
+    private val economyStateFlow = combine(
+        economyRepository.coinBalance,
+        economyRepository.unlockedSkins,
+        economyRepository.dailyMissions
+    ) { balance, unlocked, missions ->
+        EconomyUiState(
+            coinBalance = balance,
+            unlockedSkins = unlocked,
+            dailyMissions = missions
+        )
     }
 
     init {
@@ -92,6 +115,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         connectedMatchId = room.matchId
                         localSessionController.stop()
                         _isMultiplayerSession.value = true
+                        resetMatchTracking()
                         webRtcSessionController.connectRoom(room, social.userProfile)
                     } else {
                         webRtcSessionController.updateRoomMetadata(room)
@@ -102,9 +126,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Trigger retro synthesized SFX on line clears, sabotage bursts, and game over
+        // Trigger retro synthesized SFX, match rewards, and daily mission progress
         viewModelScope.launch {
             activeGameStateFlow.collect { game ->
+                if (!game.isGameOver && wasGameOver) {
+                    resetMatchTracking()
+                }
+
                 if (game.lineClearEventId > lastPlayedClearEventId) {
                     lastPlayedClearEventId = game.lineClearEventId
                     soundEngine.playLineClear(game.lastClearedRowIndices.size.coerceAtLeast(1))
@@ -112,8 +140,42 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     lastPlayedClearEventId = 0L
                 }
 
+                val localPlayerId = currentController().sessionState.value.controlledPlayerId
+                val trackedLines = if (game.mode == GameMode.CO_OP) {
+                    game.sharedLines
+                } else {
+                    game.playerLines[localPlayerId] ?: 0
+                }
+                if (trackedLines > lastRecordedLinesForMissions) {
+                    val delta = trackedLines - lastRecordedLinesForMissions
+                    lastRecordedLinesForMissions = trackedLines
+                    economyRepository.recordLinesCleared(delta)
+                } else if (trackedLines < lastRecordedLinesForMissions) {
+                    lastRecordedLinesForMissions = trackedLines
+                }
+
                 if (game.isGameOver && !wasGameOver) {
                     soundEngine.playGameOver()
+                    if (!rewardGrantedForCurrentMatch) {
+                        rewardGrantedForCurrentMatch = true
+                        val isMultiplayer = _isMultiplayerSession.value
+                        val durationMs = (System.currentTimeMillis() - matchStartedAtMillis).coerceAtLeast(0L)
+                        val breakdown = MatchRewardCalculator.calculate(
+                            gameState = game,
+                            localPlayerId = localPlayerId,
+                            isLocalTest = !isMultiplayer,
+                            matchDurationMillis = durationMs
+                        )
+                        _lastMatchReward.value = breakdown
+                        if (breakdown.totalCoins > 0) {
+                            economyRepository.addCoins(breakdown.totalCoins)
+                        }
+                        economyRepository.recordMatchCompleted(
+                            mode = game.mode,
+                            isMultiplayer = isMultiplayer,
+                            didLocalPlayerWin = game.mode == GameMode.VERSUS && game.winnerPlayerId == localPlayerId
+                        )
+                    }
                 }
                 wasGameOver = game.isGameOver
             }
@@ -137,6 +199,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         activeGameStateFlow,
         activeSessionStateFlow,
         socialManager.socialState,
+        economyStateFlow,
+        _lastMatchReward,
         webRtcSessionController.signalState,
         _isMultiplayerSession,
         _isMuted
@@ -147,9 +211,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val game = values[2] as GameState
         val network = values[3] as NetworkSessionState
         val social = values[4] as SocialUiState
-        val signal = values[5] as WebRtcSignalState
-        val isMultiplayer = values[6] as Boolean
-        val isMuted = values[7] as Boolean
+        val economy = values[5] as EconomyUiState
+        val matchReward = values[6] as MatchRewardBreakdown?
+        val signal = values[7] as WebRtcSignalState
+        val isMultiplayer = values[8] as Boolean
+        val isMuted = values[9] as Boolean
 
         val syncedSkins = if (!isMultiplayer &&
             social.userProfile.selectedSkinId.isNotBlank() &&
@@ -167,6 +233,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             gameState = game,
             networkState = network,
             socialState = social,
+            economyState = economy,
+            lastMatchReward = matchReward,
             webRtcSignalState = signal,
             isMultiplayerSession = isMultiplayer,
             isMuted = isMuted
@@ -176,6 +244,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = MultiTetrisUiState()
     )
+
+    private fun resetMatchTracking() {
+        matchStartedAtMillis = System.currentTimeMillis()
+        rewardGrantedForCurrentMatch = false
+        lastRecordedLinesForMissions = 0
+        _lastMatchReward.value = null
+    }
 
     private fun currentController(): GameSessionController {
         return if (_isMultiplayerSession.value) webRtcSessionController else localSessionController
@@ -197,10 +272,36 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun purchaseAndEquipSkin(playerId: Int, skinId: String, price: Int) {
+        viewModelScope.launch {
+            val purchased = economyRepository.purchaseSkin(skinId, price)
+            if (purchased) {
+                soundEngine.playCoinChime()
+                setPlayerSkin(playerId, skinId)
+            }
+        }
+    }
+
+    fun claimDailyMission(missionId: String) {
+        viewModelScope.launch {
+            val reward = economyRepository.claimMissionReward(missionId)
+            if (reward > 0) {
+                soundEngine.playCoinChime()
+            }
+        }
+    }
+
+    fun refreshDailyMissions() {
+        viewModelScope.launch {
+            economyRepository.refreshDailyMissionsIfNeeded()
+        }
+    }
+
     fun startLocal2PGame() {
         webRtcSessionController.stop()
         connectedMatchId = null
         _isMultiplayerSession.value = false
+        resetMatchTracking()
         localSessionController.startSession(
             mode = _selectedMode.value,
             playerSkins = uiState.value.selectedSkins,

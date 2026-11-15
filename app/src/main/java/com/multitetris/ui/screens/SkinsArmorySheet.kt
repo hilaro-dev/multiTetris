@@ -30,6 +30,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.MonetizationOn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -41,14 +44,17 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -60,9 +66,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.game.TetrominoType
 import com.multitetris.ui.skin.PlayerPalette
-import com.multitetris.ui.skin.SkinRegistry
+import com.multitetris.ui.skin.SkinCatalog
+import com.multitetris.ui.skin.SkinCatalogItem
 import com.multitetris.ui.skin.SkinRenderer
 import com.multitetris.ui.theme.CyberCyan
+import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
 import com.multitetris.ui.theme.NeonMagenta
 import com.multitetris.ui.theme.ObsidianBg
@@ -75,11 +83,15 @@ import com.multitetris.ui.theme.TextSecondary
 @Composable
 fun SkinsArmorySheet(
     selectedSkins: Map<Int, String>,
+    coinBalance: Int,
+    unlockedSkins: Set<String>,
     onEquipSkin: (playerId: Int, skinId: String) -> Unit,
+    onPurchaseSkin: (playerId: Int, skinId: String, price: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var targetPlayerId by remember { mutableIntStateOf(1) }
+    var pendingPurchaseItem by remember { mutableStateOf<SkinCatalogItem?>(null) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "armory_anim")
     val animProgress by infiniteTransition.animateFloat(
@@ -115,7 +127,8 @@ fun SkinsArmorySheet(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.AutoAwesome,
@@ -125,8 +138,8 @@ fun SkinsArmorySheet(
                     )
                     Column {
                         Text(
-                            text = "Skins Armory",
-                            fontSize = 20.sp,
+                            text = "Skins Armory & Shop",
+                            fontSize = 19.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = TextPrimary
                         )
@@ -137,12 +150,41 @@ fun SkinsArmorySheet(
                         )
                     }
                 }
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close Armory",
-                        tint = TextSecondary
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = ElectricGold.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.65f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MonetizationOn,
+                                contentDescription = "Coins",
+                                tint = ElectricGold,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = coinBalance.toString(),
+                                color = ElectricGold,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Close Armory",
+                            tint = TextSecondary
+                        )
+                    }
                 }
             }
 
@@ -181,20 +223,67 @@ fun SkinsArmorySheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(
-                    items = SkinRegistry.availableSkins,
-                    key = { it.skinId }
-                ) { renderer ->
+                    items = SkinCatalog.items,
+                    key = { it.renderer.skinId }
+                ) { item ->
+                    val isUnlocked = item.renderer.skinId in unlockedSkins || item.priceCoins == 0
                     SkinArmoryCard(
-                        renderer = renderer,
+                        renderer = item.renderer,
+                        priceCoins = item.priceCoins,
                         playerId = targetPlayerId,
-                        isEquipped = renderer.skinId == equippedSkinId,
+                        isUnlocked = isUnlocked,
+                        isEquipped = isUnlocked && item.renderer.skinId == equippedSkinId,
+                        canAfford = coinBalance >= item.priceCoins,
                         accent = targetAccent,
                         animProgress = animProgress,
-                        onEquip = { onEquipSkin(targetPlayerId, renderer.skinId) }
+                        onEquip = { onEquipSkin(targetPlayerId, item.renderer.skinId) },
+                        onRequestPurchase = { pendingPurchaseItem = item }
                     )
                 }
             }
         }
+    }
+
+    pendingPurchaseItem?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingPurchaseItem = null },
+            containerColor = SlateSurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
+            title = {
+                Text(
+                    text = "Unlock ${item.renderer.displayName}?",
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Text(
+                    text = "Spend ${item.priceCoins} Coins to permanently unlock this skin for all matches?"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onPurchaseSkin(targetPlayerId, item.renderer.skinId, item.priceCoins)
+                        pendingPurchaseItem = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ElectricGold,
+                        contentColor = ObsidianBg
+                    )
+                ) {
+                    Text(
+                        text = "Buy (${item.priceCoins})",
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPurchaseItem = null }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
     }
 }
 
@@ -233,11 +322,15 @@ private fun ArmoryTargetChip(
 @Composable
 private fun SkinArmoryCard(
     renderer: SkinRenderer,
+    priceCoins: Int,
     playerId: Int,
+    isUnlocked: Boolean,
     isEquipped: Boolean,
+    canAfford: Boolean,
     accent: Color,
     animProgress: Float,
-    onEquip: () -> Unit
+    onEquip: () -> Unit,
+    onRequestPurchase: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -247,7 +340,11 @@ private fun SkinArmoryCard(
         ),
         border = BorderStroke(
             width = if (isEquipped) 2.dp else 1.dp,
-            color = if (isEquipped) accent else SubtleBorder
+            color = when {
+                isEquipped -> accent
+                !isUnlocked && canAfford -> ElectricGold.copy(alpha = 0.5f)
+                else -> SubtleBorder
+            }
         )
     ) {
         Column(
@@ -269,7 +366,11 @@ private fun SkinArmoryCard(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Canvas(modifier = Modifier.size(width = 76.dp, height = 52.dp)) {
+                Canvas(
+                    modifier = Modifier
+                        .size(width = 76.dp, height = 52.dp)
+                        .alpha(if (isUnlocked) 1f else 0.72f)
+                ) {
                     val cells = TetrominoType.T.offsetsFor(0)
                     val cellSize = minOf(size.width / 3.4f, size.height / 2.2f)
                     val totalW = 3f * cellSize
@@ -294,6 +395,26 @@ private fun SkinArmoryCard(
                         }
                     }
                 }
+
+                if (!isUnlocked) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = ObsidianBg.copy(alpha = 0.85f),
+                        border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.6f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = "Locked",
+                            tint = ElectricGold,
+                            modifier = Modifier
+                                .padding(4.dp)
+                                .size(13.dp)
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -316,47 +437,83 @@ private fun SkinArmoryCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            if (isEquipped) {
-                Button(
-                    onClick = onEquip,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(36.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = if (playerId == 2) Color.White else ObsidianBg
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Check,
-                        contentDescription = null,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Equipped",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+            when {
+                !isUnlocked -> {
+                    Button(
+                        onClick = onRequestPurchase,
+                        enabled = canAfford,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ElectricGold,
+                            contentColor = ObsidianBg,
+                            disabledContainerColor = SubtleBorder.copy(alpha = 0.55f),
+                            disabledContentColor = TextSecondary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Buy ($priceCoins Coins)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
-            } else {
-                OutlinedButton(
-                    onClick = onEquip,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(36.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    border = BorderStroke(1.dp, SubtleBorder)
-                ) {
-                    Text(
-                        text = "Equip",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+
+                isEquipped -> {
+                    Button(
+                        onClick = onEquip,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor = if (playerId == 2) Color.White else ObsidianBg
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Equipped",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+
+                else -> {
+                    OutlinedButton(
+                        onClick = onEquip,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        border = BorderStroke(1.dp, SubtleBorder)
+                    ) {
+                        Text(
+                            text = "Equip",
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

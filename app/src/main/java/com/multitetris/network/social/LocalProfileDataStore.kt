@@ -4,8 +4,11 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.multitetris.economy.EconomyUiState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -19,6 +22,12 @@ private val Context.multiTetrisSocialDataStore: DataStore<Preferences> by prefer
 data class LocalSocialSnapshot(
     val profile: UserProfile,
     val friends: List<SavedFriend>
+)
+
+data class LocalEconomySnapshot(
+    val coinBalance: Int = EconomyUiState.DEFAULT_STARTING_COINS,
+    val unlockedSkins: Set<String> = EconomyUiState.DEFAULT_UNLOCKED_SKINS,
+    val dailyMissionsJson: String? = null
 )
 
 /**
@@ -123,6 +132,49 @@ class LocalProfileDataStore(private val context: Context) {
         }
     }
 
+    val economySnapshotFlow: Flow<LocalEconomySnapshot> = context.multiTetrisSocialDataStore.data.map { prefs ->
+        val balance = prefs[KEY_COIN_BALANCE] ?: EconomyUiState.DEFAULT_STARTING_COINS
+        val unlocked = (prefs[KEY_UNLOCKED_SKINS] ?: emptySet()) + EconomyUiState.DEFAULT_UNLOCKED_SKINS
+        val missionsJson = prefs[KEY_DAILY_MISSIONS_JSON]
+        LocalEconomySnapshot(
+            coinBalance = balance,
+            unlockedSkins = unlocked,
+            dailyMissionsJson = missionsJson
+        )
+    }
+
+    suspend fun getEconomySnapshot(): LocalEconomySnapshot = economySnapshotFlow.first()
+
+    suspend fun addCoins(amount: Int): Int {
+        var newBalance = EconomyUiState.DEFAULT_STARTING_COINS
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            val current = prefs[KEY_COIN_BALANCE] ?: EconomyUiState.DEFAULT_STARTING_COINS
+            newBalance = (current + amount).coerceAtLeast(0)
+            prefs[KEY_COIN_BALANCE] = newBalance
+        }
+        return newBalance
+    }
+
+    suspend fun purchaseSkin(skinId: String, price: Int): Boolean {
+        var purchased = false
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            val currentBalance = prefs[KEY_COIN_BALANCE] ?: EconomyUiState.DEFAULT_STARTING_COINS
+            val currentUnlocked = (prefs[KEY_UNLOCKED_SKINS] ?: emptySet()) + EconomyUiState.DEFAULT_UNLOCKED_SKINS
+            if (!currentUnlocked.contains(skinId) && currentBalance >= price && price >= 0) {
+                prefs[KEY_COIN_BALANCE] = currentBalance - price
+                prefs[KEY_UNLOCKED_SKINS] = currentUnlocked + skinId
+                purchased = true
+            }
+        }
+        return purchased
+    }
+
+    suspend fun saveDailyMissionsJson(rawJson: String) {
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_DAILY_MISSIONS_JSON] = rawJson
+        }
+    }
+
     private fun decodeFriends(raw: String?): List<SavedFriend> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<SavedFriend>>(raw) }
@@ -135,5 +187,8 @@ class LocalProfileDataStore(private val context: Context) {
         private val KEY_NICKNAME = stringPreferencesKey("nickname")
         private val KEY_SELECTED_SKIN = stringPreferencesKey("selected_skin_id")
         private val KEY_SAVED_FRIENDS_JSON = stringPreferencesKey("saved_friends_json")
+        private val KEY_COIN_BALANCE = intPreferencesKey("coin_balance")
+        private val KEY_UNLOCKED_SKINS = stringSetPreferencesKey("unlocked_skins")
+        private val KEY_DAILY_MISSIONS_JSON = stringPreferencesKey("daily_missions_json")
     }
 }

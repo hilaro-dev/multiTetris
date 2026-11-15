@@ -731,3 +731,27 @@ object SkinRegistry {
         }
     }
 }
+
+data class SkinCatalogItem(
+    val renderer: SkinRenderer,
+    val priceCoins: Int
+)
+
+object SkinCatalog {
+    val items: List<SkinCatalogItem> = listOf(
+        SkinCatalogItem(SkinRegistry.resolve(ClassicSkinRenderer.SKIN_ID), priceCoins = 0),
+        SkinCatalogItem(SkinRegistry.resolve(NeonCyberSkinRenderer.SKIN_ID), priceCoins = 150),
+        SkinCatalogItem(SkinRegistry.resolve(PixelCrystalSkinRenderer.SKIN_ID), priceCoins = 300),
+        SkinCatalogItem(SkinRegistry.resolve(ObsidianMagmaSkinRenderer.SKIN_ID), priceCoins = 500),
+        SkinCatalogItem(SkinRegistry.resolve(HologramGlitchSkinRenderer.SKIN_ID), priceCoins = 750),
+        SkinCatalogItem(SkinRegistry.resolve(GoldenFlexSkinRenderer.SKIN_ID), priceCoins = 1200)
+    )
+
+    fun priceFor(skinId: String): Int {
+        return items.firstOrNull { it.renderer.skinId == skinId }?.priceCoins ?: 0
+    }
+
+    fun itemFor(skinId: String): SkinCatalogItem? {
+        return items.firstOrNull { it.renderer.skinId == skinId }
+    }
+}
