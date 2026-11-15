@@ -25,6 +25,7 @@ import com.multitetris.network.social.AppSettingsSnapshot
 import com.multitetris.network.social.FirebaseSocialManager
 import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.LocalProfileDataStore
+import com.multitetris.network.social.MatchRole
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.RoomInvite
 import com.multitetris.network.social.SavedFriend
@@ -105,6 +106,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private var matchStartedAtMillis: Long = System.currentTimeMillis()
     private var rewardGrantedForCurrentMatch = false
     private var lastRecordedLinesForMissions = 0
+    private var roundIndex: Int = 0
+    private var playedEliminationRoundIndex: Int = -1
+    private val notifiedEliminatedIds = mutableSetOf<Int>()
+    private var previousActiveEliminatedIds: Set<Int> = emptySet()
+    private val seenFriendRequestIds = mutableSetOf<String>()
+    private val seenRoomInviteIds = mutableSetOf<String>()
+    private var lastLobbyMatchId: String? = null
+    private var lastLobbyPlayerCount: Int = 0
 
     private var lastLocalPlayerCount: Int = 2
     private var lastLocalVersusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL
@@ -160,20 +169,53 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         // Automatically start WebRTC P2P signaling when Stage 2/8 matchmaking creates/joins a room
         viewModelScope.launch {
             socialManager.socialState.collect { social ->
+                val newFriendReqIds = social.pendingFriendRequests
+                    .map { it.fromUid }
+                    .filter { it.isNotBlank() && it !in seenFriendRequestIds }
+                if (newFriendReqIds.isNotEmpty()) {
+                    seenFriendRequestIds.addAll(newFriendReqIds)
+                    soundEngine.playFriendRequestReceived()
+                }
+
+                val newInviteIds = social.incomingRoomInvites
+                    .map { "${it.matchId}:${it.hostUid}" }
+                    .filter { it !in seenRoomInviteIds }
+                if (newInviteIds.isNotEmpty()) {
+                    seenRoomInviteIds.addAll(newInviteIds)
+                    soundEngine.playRoomInviteReceived()
+                }
+
                 val matchState = social.matchmakingState
                 if (matchState is MatchmakingState.MatchFound) {
                     val room = matchState.room
+                    val resolvedCount = room.resolvedPlayers().size
+                    if (lastLobbyMatchId == room.matchId &&
+                        room.myRole == MatchRole.HOST &&
+                        resolvedCount > lastLobbyPlayerCount
+                    ) {
+                        soundEngine.playPlayerJoinedLobby()
+                    }
+                    lastLobbyMatchId = room.matchId
+                    lastLobbyPlayerCount = resolvedCount
+
                     if (connectedMatchId != room.matchId) {
                         connectedMatchId = room.matchId
                         localSessionController.stop()
                         _isMultiplayerSession.value = true
                         resetMatchTracking()
+                        if (room.myRole == MatchRole.HOST) {
+                            soundEngine.playRoomCreated()
+                        }
                         webRtcSessionController.connectRoom(room, social.userProfile)
                     } else {
                         webRtcSessionController.updateRoomMetadata(room)
                     }
-                } else if (connectedMatchId != null) {
-                    connectedMatchId = null
+                } else {
+                    lastLobbyMatchId = null
+                    lastLobbyPlayerCount = 0
+                    if (connectedMatchId != null) {
+                        connectedMatchId = null
+                    }
                 }
             }
         }
@@ -188,6 +230,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (!game.isGameOver && wasGameOver) {
                     resetMatchTracking()
+                    musicPlayer.setTrack(MusicTrack.GAMEPLAY_KOROBEINIKI)
                 }
 
                 if (game.lineClearEventId > lastPlayedClearEventId) {
@@ -198,6 +241,33 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val localPlayerId = currentController().sessionState.value.controlledPlayerId
+                if (playedEliminationRoundIndex != roundIndex) {
+                    notifiedEliminatedIds.clear()
+                    previousActiveEliminatedIds = emptySet()
+                    playedEliminationRoundIndex = roundIndex
+                }
+                if (game.isGameOver) {
+                    notifiedEliminatedIds.clear()
+                    previousActiveEliminatedIds = emptySet()
+                } else if (game.activePieces.isNotEmpty()) {
+                    val newlyEliminated = game.eliminatedPlayerIds.filter { pid ->
+                        pid !in previousActiveEliminatedIds &&
+                            pid !in game.disconnectedPlayerIds &&
+                            pid !in notifiedEliminatedIds
+                    }
+                    if (newlyEliminated.isNotEmpty()) {
+                        notifiedEliminatedIds.addAll(newlyEliminated)
+                        if (localPlayerId in newlyEliminated) {
+                            soundEngine.playSelfEliminated()
+                        } else {
+                            soundEngine.playOtherPlayerEliminated()
+                        }
+                    }
+                    previousActiveEliminatedIds = game.eliminatedPlayerIds
+                } else {
+                    previousActiveEliminatedIds = emptySet()
+                }
+
                 val trackedLines = if (game.mode == GameMode.CO_OP) {
                     game.sharedLines
                 } else {
@@ -213,6 +283,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (game.isGameOver && !wasGameOver) {
                     soundEngine.playGameOver()
+                    musicPlayer.windDownAndStop()
                     if (!rewardGrantedForCurrentMatch) {
                         rewardGrantedForCurrentMatch = true
                         val isMultiplayer = _isMultiplayerSession.value
@@ -370,6 +441,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private fun resetMatchTracking() {
+        roundIndex += 1
+        notifiedEliminatedIds.clear()
+        previousActiveEliminatedIds = emptySet()
+        playedEliminationRoundIndex = roundIndex
         matchStartedAtMillis = System.currentTimeMillis()
         rewardGrantedForCurrentMatch = false
         lastRecordedLinesForMissions = 0
@@ -479,6 +554,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopGameLoop() {
+        notifiedEliminatedIds.clear()
+        previousActiveEliminatedIds = emptySet()
         localSessionController.stop()
         if (_isMultiplayerSession.value) {
             webRtcSessionController.stop()
@@ -671,7 +748,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun acceptRoomInvite(invite: RoomInvite) {
+        soundEngine.playPlayerJoinedLobby()
         socialManager.acceptRoomInvite(invite)
+    }
+
+    fun playMatchStartSound() {
+        soundEngine.playMatchStart()
     }
 
     fun declineRoomInvite(invite: RoomInvite) {

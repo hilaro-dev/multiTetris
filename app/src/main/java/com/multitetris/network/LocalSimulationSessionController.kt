@@ -159,6 +159,8 @@ class LocalSimulationSessionController(
     override fun stop() {
         tickerJob?.cancel()
         tickerJob = null
+        _gameState.value = GameState()
+        _sessionState.value = NetworkSessionState()
     }
 
     private fun startGravityTicker() {

@@ -36,17 +36,38 @@ class ChiptuneMusicPlayer {
     @Volatile
     private var released: Boolean = false
 
+    @Volatile
+    private var requestedWindDownSamples: Int = 0
+
+    @Volatile
+    private var isWindingDown: Boolean = false
+
     private val wakeLock = Object()
     private var workerThread: Thread? = null
 
     fun setTrack(track: MusicTrack) {
         if (released) return
-        if (requestedTrack == track) return
+        requestedWindDownSamples = 0
+        val wasWindingDown = isWindingDown
+        isWindingDown = false
+        val workerAlive = workerThread?.isAlive == true
+        if (requestedTrack == track && !wasWindingDown && workerAlive) return
         requestedTrack = track
         synchronized(wakeLock) {
             wakeLock.notifyAll()
         }
-        ensureWorkerStarted()
+        if (track != MusicTrack.NONE) {
+            ensureWorkerStarted()
+        }
+    }
+
+    fun windDownAndStop(durationMs: Long = 1100L) {
+        if (released || requestedTrack == MusicTrack.NONE) return
+        val samples = ((SAMPLE_RATE * durationMs.coerceAtLeast(100L)) / 1000L).toInt()
+        requestedWindDownSamples = samples
+        synchronized(wakeLock) {
+            wakeLock.notifyAll()
+        }
     }
 
     fun setMuted(muted: Boolean) {
@@ -80,9 +101,9 @@ class ChiptuneMusicPlayer {
     }
 
     private fun ensureWorkerStarted() {
-        if (workerThread != null || released) return
+        if (workerThread?.isAlive == true || released) return
         synchronized(wakeLock) {
-            if (workerThread != null || released) return
+            if (workerThread?.isAlive == true || released) return
             workerThread = Thread(::runAudioLoop, "MultiTetris-ChiptuneMusic").apply {
                 isDaemon = true
                 start()
@@ -121,6 +142,8 @@ class ChiptuneMusicPlayer {
         var activeTrack = MusicTrack.NONE
         var isPlaying = false
         var fadeGain = 0.0
+        var windDownTotalSamples = 0
+        var windDownElapsedSamples = 0
 
         // Synthesizer state
         var stepPosSamples = 0.0
@@ -134,10 +157,24 @@ class ChiptuneMusicPlayer {
 
         try {
             while (!released) {
+                val windReq = requestedWindDownSamples
+                if (windReq > 0) {
+                    requestedWindDownSamples = 0
+                    if (activeTrack != MusicTrack.NONE && !isMuted && !isLifecyclePaused) {
+                        isWindingDown = true
+                        windDownTotalSamples = windReq
+                        windDownElapsedSamples = 0
+                    } else {
+                        isWindingDown = false
+                        requestedTrack = MusicTrack.NONE
+                    }
+                }
+
                 val targetTrack = requestedTrack
                 val shouldSilence = targetTrack == MusicTrack.NONE || isMuted || isLifecyclePaused
 
                 if (shouldSilence && fadeGain <= 0.001) {
+                    isWindingDown = false
                     if (isPlaying) {
                         runCatching {
                             track.pause()
@@ -158,6 +195,7 @@ class ChiptuneMusicPlayer {
 
                 // Switch track cleanly after fading out to zero
                 if (activeTrack != targetTrack) {
+                    isWindingDown = false
                     if (fadeGain > 0.001 && activeTrack != MusicTrack.NONE) {
                         // Ramp down over one chunk before switching
                         renderChunk(
@@ -214,11 +252,23 @@ class ChiptuneMusicPlayer {
                     else -> fadeGain
                 }
 
+                val windProgressStart: Double
+                val windProgressEnd: Double
+                if (isWindingDown && windDownTotalSamples > 0) {
+                    windProgressStart = (windDownElapsedSamples.toDouble() / windDownTotalSamples).coerceIn(0.0, 1.0)
+                    windProgressEnd = ((windDownElapsedSamples + CHUNK_SAMPLES).toDouble() / windDownTotalSamples).coerceIn(0.0, 1.0)
+                } else {
+                    windProgressStart = 0.0
+                    windProgressEnd = 0.0
+                }
+
                 renderChunk(
                     trackType = activeTrack,
                     out = buffer,
                     fadeStart = fadeGain,
                     fadeEnd = fadeEnd,
+                    windProgressStart = windProgressStart,
+                    windProgressEnd = windProgressEnd,
                     highTension = isHighTension,
                     getStepSamples = { stepPosSamples },
                     setStepSamples = { stepPosSamples = it },
@@ -244,6 +294,15 @@ class ChiptuneMusicPlayer {
                 )
                 fadeGain = fadeEnd
 
+                if (isWindingDown) {
+                    windDownElapsedSamples += CHUNK_SAMPLES
+                    if (windDownElapsedSamples >= windDownTotalSamples) {
+                        isWindingDown = false
+                        requestedTrack = MusicTrack.NONE
+                        fadeGain = 0.0
+                    }
+                }
+
                 if (!isPlaying) {
                     runCatching { track.play() }
                     isPlaying = true
@@ -254,6 +313,11 @@ class ChiptuneMusicPlayer {
         } catch (_: InterruptedException) {
             // Normal shutdown
         } finally {
+            synchronized(wakeLock) {
+                if (workerThread === Thread.currentThread()) {
+                    workerThread = null
+                }
+            }
             runCatching {
                 track.pause()
                 track.flush()
@@ -268,6 +332,8 @@ class ChiptuneMusicPlayer {
         out: ShortArray,
         fadeStart: Double,
         fadeEnd: Double,
+        windProgressStart: Double = 0.0,
+        windProgressEnd: Double = 0.0,
         highTension: Boolean,
         getStepSamples: () -> Double,
         setStepSamples: (Double) -> Unit,
@@ -294,7 +360,12 @@ class ChiptuneMusicPlayer {
             // 95 BPM, 16th-note step duration
             val stepSamples = SAMPLE_RATE * (60.0 / 95.0 / 4.0)
             for (i in 0 until n) {
-                stepPos += 1.0
+                val sampleRatio = i.toDouble() / n
+                val windP = windProgressStart + (windProgressEnd - windProgressStart) * sampleRatio
+                val slowdown = 1.0 - 0.40 * windP
+                val windFade = (1.0 - windP).coerceIn(0.0, 1.0)
+
+                stepPos += slowdown
                 if (stepPos >= stepSamples) {
                     stepPos -= stepSamples
                     advanceLobbyStep()
@@ -302,8 +373,8 @@ class ChiptuneMusicPlayer {
                 val progress = (stepPos / stepSamples).coerceIn(0.0, 1.0)
                 val step = LOBBY_STEPS[getLobbyStep()]
 
-                val leadFreq = midiToHz(step.arpMidi)
-                val bassFreq = midiToHz(step.bassMidi)
+                val leadFreq = midiToHz(step.arpMidi) * slowdown
+                val bassFreq = midiToHz(step.bassMidi) * slowdown
 
                 lPhase = (lPhase + leadFreq / SAMPLE_RATE) % 1.0
                 bPhase = (bPhase + bassFreq / SAMPLE_RATE) % 1.0
@@ -318,7 +389,7 @@ class ChiptuneMusicPlayer {
                 val bassEnv = 0.85
 
                 val mix = (lp * arpEnv * 0.52 + triBass * bassEnv * 0.48) * 0.20
-                val fade = fadeStart + (fadeEnd - fadeStart) * (i.toDouble() / n)
+                val fade = (fadeStart + (fadeEnd - fadeStart) * sampleRatio) * windFade
                 val sample = (mix * fade * Short.MAX_VALUE).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
                 out[i] = sample.toShort()
             }
@@ -326,7 +397,12 @@ class ChiptuneMusicPlayer {
             val tempoMul = if (highTension) 1.15 else 1.0
             val eighthSamples = SAMPLE_RATE * (60.0 / (144.0 * tempoMul) / 2.0)
             for (i in 0 until n) {
-                stepPos += 1.0
+                val sampleRatio = i.toDouble() / n
+                val windP = windProgressStart + (windProgressEnd - windProgressStart) * sampleRatio
+                val slowdown = 1.0 - 0.40 * windP
+                val windFade = (1.0 - windP).coerceIn(0.0, 1.0)
+
+                stepPos += slowdown
                 if (stepPos >= eighthSamples) {
                     stepPos -= eighthSamples
                     advanceKoroEighth()
@@ -338,7 +414,7 @@ class ChiptuneMusicPlayer {
 
                 // Crisp 8-bit square wave lead with slight note separation at tail
                 val leadSample = if (event.midi > 0) {
-                    val leadFreq = midiToHz(event.midi)
+                    val leadFreq = midiToHz(event.midi) * slowdown
                     lPhase = (lPhase + leadFreq / SAMPLE_RATE) % 1.0
                     val sq = if (lPhase < 0.5) 1.0 else -1.0
                     val env = when {
@@ -354,7 +430,7 @@ class ChiptuneMusicPlayer {
                 // Punchy triangle bass on every 8th note
                 val bassMidi = getKoroBassMidi()
                 val bassSample = if (bassMidi > 0) {
-                    val bassFreq = midiToHz(bassMidi)
+                    val bassFreq = midiToHz(bassMidi) * slowdown
                     bPhase = (bPhase + bassFreq / SAMPLE_RATE) % 1.0
                     val tri = 2.0 * kotlin.math.abs(2.0 * bPhase - 1.0) - 1.0
                     val bEnv = if (unitProgress < 0.05) unitProgress / 0.05 else (1.0 - unitProgress * 0.45)
@@ -364,7 +440,7 @@ class ChiptuneMusicPlayer {
                 }
 
                 val mix = (leadSample * 0.56 + bassSample * 0.44) * 0.28
-                val fade = fadeStart + (fadeEnd - fadeStart) * (i.toDouble() / n)
+                val fade = (fadeStart + (fadeEnd - fadeStart) * sampleRatio) * windFade
                 val sample = (mix * fade * Short.MAX_VALUE).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
                 out[i] = sample.toShort()
             }

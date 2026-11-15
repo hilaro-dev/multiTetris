@@ -138,6 +138,7 @@ fun MultiTetrisApp(
             }
 
             currentRoute == Routes.LOBBY && signalState is WebRtcSignalState.Connected -> {
+                gameViewModel.playMatchStartSound()
                 navController.navigate(Routes.GAME) {
                     popUpTo(Routes.HOME) { inclusive = false }
                     launchSingleTop = true
@@ -188,6 +189,7 @@ fun MultiTetrisApp(
                     onCreateRoom = gameViewModel::createRoom,
                     onCancelPlayTogetherSearch = gameViewModel::cancelPlayTogetherSearch,
                     onStartLocalTest = { playerCount, subMode ->
+                        gameViewModel.playMatchStartSound()
                         gameViewModel.startLocalTestGame(playerCount, subMode)
                         navController.navigate(Routes.GAME)
                     }

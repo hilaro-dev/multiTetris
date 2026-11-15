@@ -2440,12 +2440,30 @@ private fun GameOverOverlay(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        val activeConnectedCount = if (networkState.players.isNotEmpty()) {
+            networkState.players.count { !it.isDisconnected && !gameState.isPlayerDisconnected(it.playerId) }
+        } else {
+            (1..gameState.config.playerCount).count { !gameState.isPlayerDisconnected(it) }
+        }
+        val canPlayAgain = isLocalTest || (
+            networkState.status == ConnectionStatus.CONNECTED && activeConnectedCount >= 2
+        )
+
         Button(
             onClick = onPlayAgain,
+            enabled = canPlayAgain,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = titleColor, contentColor = ObsidianBg)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = titleColor,
+                contentColor = ObsidianBg,
+                disabledContainerColor = SubtleBorder,
+                disabledContentColor = TextSecondary
+            )
         ) {
-            Text("Play Again", fontWeight = FontWeight.ExtraBold)
+            Text(
+                text = if (canPlayAgain) "Play Again" else "Players Left • Return Home",
+                fontWeight = FontWeight.ExtraBold
+            )
         }
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedButton(

@@ -64,6 +64,7 @@ class WebRtcSessionController(
     private val syncedSkins = ConcurrentHashMap<Int, String>()
     private val syncedNames = ConcurrentHashMap<Int, String>()
     private val syncedSabotages = ConcurrentHashMap<Int, List<com.multitetris.game.SabotageType>>()
+    private val activeUidsBySlot = ConcurrentHashMap<Int, String>()
 
     private var observerJob: Job? = null
     private var packetJob: Job? = null
@@ -93,6 +94,7 @@ class WebRtcSessionController(
         inputSeqCounter.set(0)
         syncedSkins.clear()
         syncedNames.clear()
+        activeUidsBySlot.clear()
 
         syncMapsFromRoom(room)
 
@@ -142,6 +144,9 @@ class WebRtcSessionController(
             }
             syncedNames[slot.slotIndex] = displayName
             syncedSabotages[slot.slotIndex] = com.multitetris.game.SabotageConfig.resolveLoadout(slot.selectedSabotages)
+            if (slot.uid.isNotBlank()) {
+                activeUidsBySlot[slot.slotIndex] = slot.uid
+            }
         }
     }
 
@@ -260,25 +265,89 @@ class WebRtcSessionController(
         val room = currentRoom ?: return
         if (_sessionState.value.status != ConnectionStatus.CONNECTED) return
 
-        val players = room.resolvedPlayers()
-        val playerCount = players.size.coerceIn(2, 4)
         if (room.myRole == MatchRole.HOST) {
-            val teamsMap = players.associate { it.slotIndex to it.team }
-            signalingClient.sendPacket(RematchRequestPacket(requestedByPlayerId = 1))
-            startSession(
-                mode = room.mode,
-                playerSkins = syncedSkins.toMap(),
-                config = BoardConfig.forPlayerCount(playerCount),
-                versusSubMode = room.versusSubMode,
-                playerTeams = teamsMap,
-                sabotageEnabled = room.sabotageEnabled,
-                equippedSabotages = syncedSabotages.toMap(),
-                mysteryEnabled = room.mysteryEnabled
-            )
+            startRematchFromConnectedPlayers()
         } else {
             lastReceivedTick = -1L
             signalingClient.sendPacket(RematchRequestPacket(requestedByPlayerId = room.mySlotIndex))
         }
+    }
+
+    private fun startRematchFromConnectedPlayers() {
+        val room = currentRoom ?: return
+        if (room.myRole != MatchRole.HOST) return
+
+        val disconnectedSlots = hostEngine.state.disconnectedPlayerIds +
+            _sessionState.value.players.filter { it.isDisconnected }.map { it.playerId }
+        val connectedEndpoints = _sessionState.value.players.filter { it.playerId !in disconnectedSlots }
+        val resolvedByUid = room.resolvedPlayers().associateBy { it.uid }
+        val resolvedBySlot = room.resolvedPlayers().associateBy { it.slotIndex }
+
+        val survivingSlots = if (connectedEndpoints.isNotEmpty()) {
+            connectedEndpoints.sortedBy { it.playerId }.mapNotNull { ep ->
+                resolvedByUid[ep.uid] ?: resolvedBySlot[ep.playerId]
+            }
+        } else {
+            room.resolvedPlayers().filter { it.slotIndex !in disconnectedSlots }
+        }
+
+        if (survivingSlots.size < 2) return
+
+        val remappedPlayers = survivingSlots.mapIndexed { index, slot ->
+            slot.copy(slotIndex = index + 1)
+        }
+        val oldToNewSlot = survivingSlots.mapIndexed { index, slot ->
+            slot.slotIndex to (index + 1)
+        }.toMap()
+
+        val newSkins = mutableMapOf<Int, String>()
+        val newNames = mutableMapOf<Int, String>()
+        val newSabotages = mutableMapOf<Int, List<com.multitetris.game.SabotageType>>()
+        val newUids = mutableMapOf<Int, String>()
+        val newTeams = mutableMapOf<Int, TeamColor>()
+
+        for ((oldSlot, newSlot) in oldToNewSlot) {
+            val playerObj = remappedPlayers.first { it.slotIndex == newSlot }
+            newSkins[newSlot] = syncedSkins[oldSlot] ?: playerObj.skinId.ifBlank { "classic" }
+            newNames[newSlot] = syncedNames[oldSlot] ?: playerObj.nickname.ifBlank { "Player $newSlot" }
+            newSabotages[newSlot] = syncedSabotages[oldSlot]
+                ?: com.multitetris.game.SabotageConfig.resolveLoadout(playerObj.selectedSabotages)
+            if (playerObj.uid.isNotBlank()) {
+                newUids[newSlot] = playerObj.uid
+            }
+            newTeams[newSlot] = playerObj.team
+        }
+
+        syncedSkins.clear()
+        syncedSkins.putAll(newSkins)
+        syncedNames.clear()
+        syncedNames.putAll(newNames)
+        syncedSabotages.clear()
+        syncedSabotages.putAll(newSabotages)
+        activeUidsBySlot.clear()
+        activeUidsBySlot.putAll(newUids)
+
+        val updatedRoom = room.copy(players = remappedPlayers)
+        currentRoom = updatedRoom
+        _sessionState.update { session ->
+            session.copy(
+                controlledPlayerId = 1,
+                players = buildEndpointList(updatedRoom),
+                activeSabotagedPlayerIds = emptySet()
+            )
+        }
+
+        signalingClient.sendPacket(RematchRequestPacket(requestedByPlayerId = 1))
+        startSession(
+            mode = updatedRoom.mode,
+            playerSkins = newSkins,
+            config = BoardConfig.forPlayerCount(remappedPlayers.size.coerceIn(2, 4)),
+            versusSubMode = updatedRoom.versusSubMode,
+            playerTeams = newTeams,
+            sabotageEnabled = updatedRoom.sabotageEnabled,
+            equippedSabotages = newSabotages,
+            mysteryEnabled = updatedRoom.mysteryEnabled
+        )
     }
 
     override fun switchControlledPlayer(playerId: Int) {
@@ -323,6 +392,8 @@ class WebRtcSessionController(
         peerLeftJob = null
         signalingClient.close()
         currentRoom = null
+        _gameState.value = GameState()
+        _sessionState.value = NetworkSessionState()
     }
 
     fun dispose() {
@@ -505,9 +576,10 @@ class WebRtcSessionController(
 
             is InputPacket -> {
                 if (room.myRole != MatchRole.HOST) return
-                val targetSlot = room.resolvedPlayers()
-                    .firstOrNull { it.uid == incoming.fromUid }
-                    ?.slotIndex
+                val targetSlot = activeUidsBySlot.entries.firstOrNull { it.value == incoming.fromUid }?.key
+                    ?: room.resolvedPlayers()
+                        .firstOrNull { it.uid == incoming.fromUid }
+                        ?.slotIndex
                     ?: incoming.slotIndex.takeIf { it in 2..4 }
                     ?: packet.playerId.coerceIn(2, 4)
                 val now = clockMillis()
@@ -523,13 +595,17 @@ class WebRtcSessionController(
 
             is UseSabotagePacket -> {
                 if (room.myRole != MatchRole.HOST) return
-                val attackerSlot = room.resolvedPlayers()
-                    .firstOrNull { it.uid == packet.attackerUid || it.uid == incoming.fromUid }
-                    ?.slotIndex
+                val attackerSlot = activeUidsBySlot.entries.firstOrNull {
+                    it.value == packet.attackerUid || it.value == incoming.fromUid
+                }?.key
+                    ?: room.resolvedPlayers()
+                        .firstOrNull { it.uid == packet.attackerUid || it.uid == incoming.fromUid }
+                        ?.slotIndex
                     ?: incoming.slotIndex.takeIf { it in 2..4 }
                     ?: packet.attackerPlayerId.coerceIn(2, 4)
                 val targetSlot = if (packet.targetUid.isNotBlank()) {
-                    room.resolvedPlayers().firstOrNull { it.uid == packet.targetUid }?.slotIndex
+                    activeUidsBySlot.entries.firstOrNull { it.value == packet.targetUid }?.key
+                        ?: room.resolvedPlayers().firstOrNull { it.uid == packet.targetUid }?.slotIndex
                         ?: packet.targetPlayerId
                 } else {
                     packet.targetPlayerId
@@ -561,7 +637,10 @@ class WebRtcSessionController(
                 if (packet.playerNames.isNotEmpty()) {
                     packet.playerNames.forEach { (pid, name) -> syncedNames[pid] = name }
                 }
-                val mySlot = room.mySlotIndex.coerceIn(2, 4)
+                val mySlot = packet.playerUids.entries
+                    .firstOrNull { it.value == myProfile.uid && myProfile.uid.isNotBlank() }
+                    ?.key
+                    ?: room.mySlotIndex.coerceIn(2, 4)
                 val roomPlayers = room.resolvedPlayers()
                 val refreshedEndpoints = (1..clientState.config.playerCount).map { pid ->
                     PlayerEndpointState(
@@ -569,7 +648,8 @@ class WebRtcSessionController(
                         displayName = syncedNames[pid] ?: "Player $pid",
                         isLocalController = pid == mySlot,
                         isDisconnected = pid in packet.disconnectedPlayerIds,
-                        uid = roomPlayers.firstOrNull { it.slotIndex == pid }?.uid.orEmpty()
+                        uid = packet.playerUids[pid]
+                            ?: roomPlayers.firstOrNull { it.slotIndex == pid }?.uid.orEmpty()
                     )
                 }
                 _sessionState.update {
@@ -583,19 +663,7 @@ class WebRtcSessionController(
 
             is RematchRequestPacket -> {
                 if (room.myRole == MatchRole.HOST) {
-                    val players = room.resolvedPlayers()
-                    val playerCount = players.size.coerceIn(2, 4)
-                    val teamsMap = players.associate { it.slotIndex to it.team }
-                    startSession(
-                        mode = room.mode,
-                        playerSkins = syncedSkins.toMap(),
-                        config = BoardConfig.forPlayerCount(playerCount),
-                        versusSubMode = room.versusSubMode,
-                        playerTeams = teamsMap,
-                        sabotageEnabled = room.sabotageEnabled,
-                        equippedSabotages = syncedSabotages.toMap(),
-                        mysteryEnabled = room.mysteryEnabled
-                    )
+                    startRematchFromConnectedPlayers()
                 } else {
                     lastReceivedTick = -1L
                 }
@@ -688,7 +756,8 @@ class WebRtcSessionController(
                 tick = tick,
                 state = state,
                 nowMillis = now,
-                playerNames = syncedNames.toMap()
+                playerNames = syncedNames.toMap(),
+                playerUids = activeUidsBySlot.toMap()
             )
             signalingClient.sendPacket(packet)
         }

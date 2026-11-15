@@ -75,6 +75,62 @@ class RetroSoundEngine {
         )
     }
 
+    private val roomCreatedClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(523.25, 783.99), // C5 -> G5 (~120ms)
+            noteDurationMs = 60,
+            volume = 0.28
+        )
+    }
+
+    private val friendRequestClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(659.25, 880.0), // E5 -> A5 (~180ms)
+            noteDurationMs = 90,
+            volume = 0.22
+        )
+    }
+
+    private val roomInviteClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(783.99, 1046.50), // G5 -> C6 (~200ms)
+            noteDurationMs = 100,
+            volume = 0.34
+        )
+    }
+
+    private val playerJoinedLobbyClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(523.25, 659.25, 783.99), // C5 -> E5 -> G5 (~220ms)
+            noteDurationMs = 73,
+            volume = 0.26
+        )
+    }
+
+    private val matchStartClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(523.25, 659.25, 783.99, 1046.50), // C5 -> E5 -> G5 -> C6 (~320ms)
+            noteDurationMs = 80,
+            volume = 0.34
+        )
+    }
+
+    private val selfEliminatedClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(392.0, 329.63, 261.63, 196.0), // G4 -> E4 -> C4 -> G3 (~400ms)
+            noteDurationMs = 100,
+            volume = 0.32
+        )
+    }
+
+    private val otherEliminatedClip: ShortArray by lazy {
+        synthesizeArpeggio(
+            freqs = listOf(293.66, 220.0), // D4 -> A3 (~140ms, ~50% gain)
+            noteDurationMs = 70,
+            volume = 0.15
+        )
+    }
+
     fun playMove() = enqueueClip(moveClip)
 
     fun playRotate() = enqueueClip(rotateClip)
@@ -92,6 +148,20 @@ class RetroSoundEngine {
     fun playGameOver() = enqueueClip(gameOverClip)
 
     fun playCoinChime() = enqueueClip(coinChimeClip)
+
+    fun playRoomCreated() = enqueueClip(roomCreatedClip)
+
+    fun playFriendRequestReceived() = enqueueClip(friendRequestClip)
+
+    fun playRoomInviteReceived() = enqueueClip(roomInviteClip)
+
+    fun playPlayerJoinedLobby() = enqueueClip(playerJoinedLobbyClip)
+
+    fun playMatchStart() = enqueueClip(matchStartClip)
+
+    fun playSelfEliminated() = enqueueClip(selfEliminatedClip)
+
+    fun playOtherPlayerEliminated() = enqueueClip(otherEliminatedClip)
 
     fun shutdown() {
         runCatching { executor.shutdownNow() }

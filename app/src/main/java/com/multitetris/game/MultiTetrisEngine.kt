@@ -712,10 +712,23 @@ class MultiTetrisEngine(
      * and re-evaluates Last-Standing / 2v2 / Co-op match-end conditions immediately.
      */
     fun markPlayerDisconnected(playerId: Int, displayName: String? = null): GameState {
-        if (state.isGameOver || playerId in state.disconnectedPlayerIds) {
+        if (playerId in state.disconnectedPlayerIds) {
             return state
         }
         if (state.config.spawnZones.none { it.playerId == playerId }) {
+            return state
+        }
+
+        val label = displayName?.takeIf { it.isNotBlank() } ?: "P$playerId"
+        val feedToast = "$label left the match"
+        val nextFeedEventId = state.feedToastEventId + 1L
+
+        if (state.isGameOver) {
+            state = state.copy(
+                disconnectedPlayerIds = state.disconnectedPlayerIds + playerId,
+                feedToastMessage = feedToast,
+                feedToastEventId = nextFeedEventId
+            )
             return state
         }
 
@@ -729,9 +742,6 @@ class MultiTetrisEngine(
         val updatedActive = state.activePieces.toMutableMap().apply { remove(playerId) }
         val updatedGhosts = state.ghostPieces.toMutableMap().apply { remove(playerId) }
         val updatedSabotages = state.activeSabotages.toMutableMap().apply { remove(playerId) }
-        val label = displayName?.takeIf { it.isNotBlank() } ?: "P$playerId"
-        val feedToast = "$label left the match"
-        val nextFeedEventId = state.feedToastEventId + 1L
 
         if (state.mode == GameMode.CO_OP) {
             val allBlockedOrLeft = newBlockedIds.size >= state.config.playerCount || updatedActive.isEmpty()

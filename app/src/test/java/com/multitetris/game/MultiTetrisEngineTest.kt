@@ -628,4 +628,25 @@ class MultiTetrisEngineTest {
         assertEquals(0L, nextP1.pieceAliveMs)
         assertFalse(afterDrop.isPieceHiddenByMystery(nextP1))
     }
+
+    @Test
+    fun markPlayerDisconnected_duringGameOver_recordsDisconnectedPlayerWithoutClearingWinner() {
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        engine.setStateForTest(
+            GameState(
+                config = BoardConfig.forPlayerCount(3),
+                mode = GameMode.VERSUS,
+                isGameOver = true,
+                winnerPlayerId = 1,
+                playerPlacements = mapOf(1 to 1, 2 to 2, 3 to 3)
+            )
+        )
+
+        val updated = engine.markPlayerDisconnected(2, "GuestTwo")
+        assertTrue(updated.isGameOver)
+        assertEquals(1, updated.winnerPlayerId)
+        assertEquals(mapOf(1 to 1, 2 to 2, 3 to 3), updated.playerPlacements)
+        assertTrue(2 in updated.disconnectedPlayerIds)
+        assertEquals("GuestTwo left the match", updated.feedToastMessage)
+    }
 }

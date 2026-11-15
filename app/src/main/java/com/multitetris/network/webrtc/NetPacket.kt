@@ -123,7 +123,8 @@ data class GameStatePacket(
     val usedSabotages: Map<Int, Set<SabotageType>> = emptyMap(),
     val activeSabotages: Map<Int, ActiveSabotageState> = emptyMap(),
     val systemGlitchWarningActive: Boolean = false,
-    val mysteryEnabled: Boolean = false
+    val mysteryEnabled: Boolean = false,
+    val playerUids: Map<Int, String> = emptyMap()
 ) : NetPacket {
 
     fun toClientGameState(
@@ -212,7 +213,8 @@ data class GameStatePacket(
             tick: Long,
             state: GameState,
             nowMillis: Long,
-            playerNames: Map<Int, String> = emptyMap()
+            playerNames: Map<Int, String> = emptyMap(),
+            playerUids: Map<Int, String> = emptyMap()
         ): GameStatePacket {
             val encodedGrid = state.grid.map { row ->
                 IntArray(row.size) { col -> GridCellCodec.encode(row[col]) }
@@ -258,7 +260,8 @@ data class GameStatePacket(
                 usedSabotages = state.usedSabotages,
                 activeSabotages = state.activeSabotages,
                 systemGlitchWarningActive = state.systemGlitchWarningActive,
-                mysteryEnabled = state.mysteryEnabled
+                mysteryEnabled = state.mysteryEnabled,
+                playerUids = playerUids
             )
         }
     }
