@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.game.GameMode
 import com.multitetris.game.TetrominoType
+import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
@@ -80,9 +81,11 @@ fun HomeScreen(
     onSelectSkin: (playerId: Int, skinId: String) -> Unit,
     onUpdateNickname: (String) -> Unit,
     onAddFriendByCode: (String) -> Unit,
+    onAcceptFriendRequest: (FriendRequest) -> Unit,
+    onDeclineFriendRequest: (String) -> Unit,
     onRemoveFriend: (String) -> Unit,
     onClearFriendFeedback: () -> Unit,
-    onStartPlayTogetherSearch: () -> Unit,
+    onCreateRoom: () -> Unit,
     onCancelPlayTogetherSearch: () -> Unit,
     onStartLocalTest: () -> Unit
 ) {
@@ -117,6 +120,7 @@ fun HomeScreen(
                 isConnected = socialState.isFirebaseConnected,
                 friendCount = socialState.friends.size,
                 onlineFriendsCount = onlineFriendsCount,
+                pendingRequestCount = socialState.pendingFriendRequests.size,
                 onOpenFriends = { showFriendsSheet = true }
             )
 
@@ -362,7 +366,7 @@ fun HomeScreen(
                     }
 
                     Button(
-                        onClick = onStartPlayTogetherSearch,
+                        onClick = onCreateRoom,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(58.dp),
@@ -380,16 +384,16 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.Start) {
                             Text(
-                                text = "PLAY ${selectedMode.label}",
+                                text = "CREATE ${selectedMode.label} ROOM",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.5.sp
                             )
                             Text(
                                 text = if (onlineFriendsCount > 0) {
-                                    "Auto-match with $onlineFriendsCount online friend(s)"
+                                    "Invite from $onlineFriendsCount online friend(s)"
                                 } else {
-                                    "Auto-match with saved friends"
+                                    "Open Room Lobby & invite saved friends"
                                 },
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Medium
@@ -435,6 +439,8 @@ fun HomeScreen(
             onDismiss = { showFriendsSheet = false },
             onUpdateNickname = onUpdateNickname,
             onAddFriendByCode = onAddFriendByCode,
+            onAcceptFriendRequest = onAcceptFriendRequest,
+            onDeclineFriendRequest = onDeclineFriendRequest,
             onRemoveFriend = onRemoveFriend,
             onClearFeedback = onClearFriendFeedback
         )
@@ -456,6 +462,7 @@ private fun TopSocialBar(
     isConnected: Boolean,
     friendCount: Int,
     onlineFriendsCount: Int,
+    pendingRequestCount: Int,
     onOpenFriends: () -> Unit
 ) {
     Row(
@@ -529,6 +536,22 @@ private fun TopSocialBar(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
+                if (pendingRequestCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(NeonMagenta),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = pendingRequestCount.coerceAtMost(9).toString(),
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
             }
         }
     }

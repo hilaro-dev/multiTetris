@@ -123,6 +123,29 @@ class WebRtcSessionController(
         signalingClient.connect(room)
     }
 
+    fun updateRoomMetadata(room: MatchRoom) {
+        if (currentRoom?.matchId != room.matchId) return
+        currentRoom = room
+        if (room.hostSkinId.isNotBlank()) {
+            syncedSkins[1] = room.hostSkinId
+        }
+        if (room.guestSkinId.isNotBlank()) {
+            syncedSkins[2] = room.guestSkinId
+        }
+        _sessionState.update { state ->
+            state.copy(
+                players = state.players.map { endpoint ->
+                    when (endpoint.playerId) {
+                        1 -> endpoint.copy(displayName = room.hostNickname)
+                        2 -> endpoint.copy(displayName = room.guestNickname)
+                        else -> endpoint
+                    }
+                }
+            )
+        }
+        signalingClient.updateRoom(room)
+    }
+
     override fun startSession(
         mode: GameMode,
         playerSkins: Map<Int, String>,

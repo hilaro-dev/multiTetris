@@ -3,9 +3,11 @@ package com.multitetris.network
 import com.multitetris.game.GameMode
 import com.multitetris.network.social.FriendCodeGenerator
 import com.multitetris.network.social.FriendLivePresence
+import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchRole
 import com.multitetris.network.social.MatchmakingTieBreaker
 import com.multitetris.network.social.PresenceState
+import com.multitetris.network.social.RoomInvite
 import com.multitetris.network.social.SavedFriend
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -128,5 +130,33 @@ class MatchmakingAndFriendCodeTest {
             "Searching (Versus)",
             FriendLivePresence(friend, PresenceState.SEARCHING, GameMode.VERSUS).statusBadgeText()
         )
+    }
+
+    @Test
+    fun stage5Models_storeFriendRequestAndRoomInviteFields() {
+        val request = FriendRequest(
+            fromUid = "sender_uid",
+            fromNickname = "PixelFox",
+            fromCode = "MT-7K9P2",
+            fromSkinId = "neon_cyber",
+            timestamp = 1_700_000_000_000L
+        )
+        assertEquals("sender_uid", request.fromUid)
+        assertEquals("PixelFox", request.fromNickname)
+        assertEquals("MT-7K9P2", request.fromCode)
+        assertEquals("neon_cyber", request.fromSkinId)
+
+        val invite = RoomInvite(
+            matchId = "match_123",
+            hostUid = "sender_uid",
+            hostNickname = "PixelFox",
+            hostSkinId = "golden_flex",
+            mode = GameMode.VERSUS,
+            timestamp = 1_700_000_005_000L
+        )
+        assertEquals("match_123", invite.matchId)
+        assertEquals("PixelFox", invite.hostNickname)
+        assertEquals("golden_flex", invite.hostSkinId)
+        assertEquals(GameMode.VERSUS, invite.mode)
     }
 }

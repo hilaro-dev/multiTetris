@@ -56,6 +56,23 @@ data class SavedFriend(
     val addedAtMillis: Long = 0L
 )
 
+data class FriendRequest(
+    val fromUid: String,
+    val fromNickname: String,
+    val fromCode: String,
+    val fromSkinId: String = "classic",
+    val timestamp: Long = 0L
+)
+
+data class RoomInvite(
+    val matchId: String,
+    val hostUid: String,
+    val hostNickname: String,
+    val hostSkinId: String = "classic",
+    val mode: GameMode = GameMode.CO_OP,
+    val timestamp: Long = 0L
+)
+
 enum class PresenceState {
     OFFLINE,
     ONLINE,

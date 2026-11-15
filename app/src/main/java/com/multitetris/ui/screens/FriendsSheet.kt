@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.game.TetrominoType
 import com.multitetris.network.social.FriendLivePresence
+import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.ui.skin.SkinRegistry
@@ -81,6 +83,8 @@ fun FriendsSheet(
     onDismiss: () -> Unit,
     onUpdateNickname: (String) -> Unit,
     onAddFriendByCode: (String) -> Unit,
+    onAcceptFriendRequest: (FriendRequest) -> Unit,
+    onDeclineFriendRequest: (String) -> Unit,
     onRemoveFriend: (String) -> Unit,
     onClearFeedback: () -> Unit
 ) {
@@ -310,7 +314,7 @@ fun FriendsSheet(
                     },
                     singleLine = true,
                     placeholder = { Text("MT-XXXXX", color = TextSecondary) },
-                    label = { Text("Add Friend Code") },
+                    label = { Text("Friend Code") },
                     modifier = Modifier.weight(1f),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = NeonMagenta,
@@ -327,6 +331,7 @@ fun FriendsSheet(
                     },
                     modifier = Modifier.height(54.dp),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = NeonMagenta,
                         contentColor = Color.White
@@ -334,11 +339,11 @@ fun FriendsSheet(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PersonAdd,
-                        contentDescription = "Add Friend",
-                        modifier = Modifier.size(18.dp)
+                        contentDescription = "Send Friend Request",
+                        modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Add", fontWeight = FontWeight.Bold)
+                    Text("Send Request", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -350,6 +355,27 @@ fun FriendsSheet(
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(top = 6.dp)
                 )
+            }
+
+            if (socialState.pendingFriendRequests.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "PENDING REQUESTS (${socialState.pendingFriendRequests.size})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ElectricGold,
+                    letterSpacing = 1.2.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    socialState.pendingFriendRequests.forEach { request ->
+                        PendingRequestRow(
+                            request = request,
+                            onAccept = { onAcceptFriendRequest(request) },
+                            onDecline = { onDeclineFriendRequest(request.fromUid) }
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -399,6 +425,84 @@ fun FriendsSheet(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun PendingRequestRow(
+    request: FriendRequest,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    val renderer = SkinRegistry.resolve(request.fromSkinId)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = ElectricGold.copy(alpha = 0.08f)),
+        border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Canvas(modifier = Modifier.size(26.dp)) {
+                    with(renderer) {
+                        drawBlock(
+                            topLeft = Offset.Zero,
+                            size = Size(size.width, size.height),
+                            tetrominoType = TetrominoType.T,
+                            playerId = 2,
+                            isGhost = false
+                        )
+                    }
+                }
+                Column {
+                    Text(
+                        text = request.fromNickname,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        text = "${request.fromCode} • Wants to add you",
+                        color = ElectricGold,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = onAccept,
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CyberCyan,
+                        contentColor = ObsidianBg
+                    )
+                ) {
+                    Text("Accept", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                OutlinedButton(
+                    onClick = onDecline,
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp),
+                    border = BorderStroke(1.dp, SubtleBorder)
+                ) {
+                    Text("Decline", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }

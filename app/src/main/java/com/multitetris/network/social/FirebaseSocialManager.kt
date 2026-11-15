@@ -28,6 +28,9 @@ data class SocialUiState(
     val isFirebaseConnected: Boolean = false,
     val isSigningIn: Boolean = false,
     val friends: List<FriendLivePresence> = emptyList(),
+    val pendingFriendRequests: List<FriendRequest> = emptyList(),
+    val incomingRoomInvites: List<RoomInvite> = emptyList(),
+    val invitedFriendUids: Set<String> = emptySet(),
     val matchmakingState: MatchmakingState = MatchmakingState.Idle,
     val feedbackMessage: String? = null
 )
@@ -53,6 +56,11 @@ class FirebaseSocialManager(
 
     private var connectedListener: ValueEventListener? = null
     private var invitesListener: ValueEventListener? = null
+    private var friendRequestsListener: ValueEventListener? = null
+    private var acceptedRequestsListener: ValueEventListener? = null
+    private var roomInvitesListener: ValueEventListener? = null
+    private var activeHostMatchListener: ValueEventListener? = null
+    private val sentRoomInviteRefs = mutableListOf<DatabaseReference>()
 
     private val friendPresenceListeners = mutableMapOf<String, ValueEventListener>()
     private val friendProfileListeners = mutableMapOf<String, ValueEventListener>()
@@ -151,6 +159,9 @@ class FirebaseSocialManager(
 
             attachConnectedPresenceMonitor(firebaseDb, uid)
             attachInvitesListener(firebaseDb, uid)
+            attachFriendRequestsListener(firebaseDb, uid)
+            attachAcceptedRequestsListener(firebaseDb, uid)
+            attachRoomInvitesListener(firebaseDb, uid)
             syncFriendListeners(snapshot.friends)
         }.onFailure { error ->
             _socialState.update {
@@ -483,6 +494,10 @@ class FirebaseSocialManager(
     }
 
     fun addFriendByCode(rawInput: String) {
+        sendFriendRequestByCode(rawInput)
+    }
+
+    fun sendFriendRequestByCode(rawInput: String) {
         val normalizedCode = FriendCodeGenerator.normalizeAndValidate(rawInput)
         if (normalizedCode == null) {
             _socialState.update {
@@ -510,52 +525,229 @@ class FirebaseSocialManager(
 
         scope.launch {
             runCatching {
-                val friendUid = db.getReference("friendCodes")
+                val targetUid = db.getReference("friendCodes")
                     .child(normalizedCode)
                     .get()
                     .await()
                     .getValue(String::class.java)
 
-                if (friendUid.isNullOrBlank()) {
+                if (targetUid.isNullOrBlank()) {
                     _socialState.update {
                         it.copy(feedbackMessage = "No player found for code $normalizedCode")
                     }
                     return@launch
                 }
 
-                if (friendUid == myUid) {
+                if (targetUid == myUid) {
                     _socialState.update {
-                        it.copy(feedbackMessage = "You cannot add yourself as a friend")
+                        it.copy(feedbackMessage = "You cannot send a request to yourself")
                     }
                     return@launch
                 }
 
-                // Register friend link first so Realtime Database rules permit reading their profile/presence
-                db.getReference("userFriends").child(myUid).child(friendUid).setValue(true).await()
+                if (savedFriendsCache.any { it.uid == targetUid }) {
+                    _socialState.update {
+                        it.copy(feedbackMessage = "Already friends with $normalizedCode")
+                    }
+                    return@launch
+                }
 
-                val userSnap = db.getReference("users").child(friendUid).get().await()
-                val nickname = userSnap.child("nickname").getValue(String::class.java)
-                    ?: FriendCodeGenerator.defaultNicknameFor(normalizedCode)
-                val skinId = userSnap.child("selectedSkinId").getValue(String::class.java)
-                    ?: "classic"
-
-                val savedFriend = SavedFriend(
-                    uid = friendUid,
-                    friendCode = normalizedCode,
-                    nickname = nickname,
-                    selectedSkinId = skinId,
-                    addedAtMillis = System.currentTimeMillis()
+                val payload = mapOf(
+                    "fromUid" to myUid,
+                    "fromNickname" to myProfile.nickname.ifBlank { "Player" },
+                    "fromCode" to myProfile.friendCode,
+                    "fromSkinId" to myProfile.selectedSkinId,
+                    "timestamp" to ServerValue.TIMESTAMP
                 )
-                localStore.addOrUpdateFriend(savedFriend)
+                db.getReference("friendRequests").child(targetUid).child(myUid)
+                    .setValue(payload)
+                    .await()
+
                 _socialState.update {
-                    it.copy(feedbackMessage = "Added $nickname ($normalizedCode)")
+                    it.copy(feedbackMessage = "Friend request sent to $normalizedCode!")
                 }
             }.onFailure { error ->
                 _socialState.update {
-                    it.copy(feedbackMessage = "Could not add friend: ${error.localizedMessage ?: "Network error"}")
+                    it.copy(feedbackMessage = "Could not send request: ${error.localizedMessage ?: "Network error"}")
                 }
             }
         }
+    }
+
+    fun acceptFriendRequest(request: FriendRequest) {
+        val db = database ?: return
+        val myProfile = _socialState.value.userProfile
+        val myUid = myProfile.uid
+        if (myUid.isBlank()) return
+
+        scope.launch {
+            runCatching {
+                // 1. Register mutual friendship links
+                db.getReference("userFriends").child(myUid).child(request.fromUid).setValue(true).await()
+                runCatching {
+                    db.getReference("userFriends").child(request.fromUid).child(myUid).setValue(true).await()
+                }
+
+                // 2. Notify requester via /acceptedRequests so their client also saves us locally
+                val ackPayload = mapOf(
+                    "friendUid" to myUid,
+                    "friendNickname" to myProfile.nickname.ifBlank { "Player" },
+                    "friendCode" to myProfile.friendCode,
+                    "friendSkinId" to myProfile.selectedSkinId,
+                    "timestamp" to ServerValue.TIMESTAMP
+                )
+                db.getReference("acceptedRequests").child(request.fromUid).child(myUid)
+                    .setValue(ackPayload)
+                    .await()
+
+                // 3. Save locally and remove the pending request
+                val savedFriend = SavedFriend(
+                    uid = request.fromUid,
+                    friendCode = request.fromCode,
+                    nickname = request.fromNickname,
+                    selectedSkinId = request.fromSkinId,
+                    addedAtMillis = System.currentTimeMillis()
+                )
+                localStore.addOrUpdateFriend(savedFriend)
+                db.getReference("friendRequests").child(myUid).child(request.fromUid).removeValue().await()
+
+                _socialState.update {
+                    it.copy(feedbackMessage = "Accepted ${request.fromNickname} (${request.fromCode})!")
+                }
+            }.onFailure { error ->
+                _socialState.update {
+                    it.copy(feedbackMessage = "Failed accepting request: ${error.localizedMessage ?: "Network error"}")
+                }
+            }
+        }
+    }
+
+    fun declineFriendRequest(fromUid: String) {
+        val db = database ?: return
+        val myUid = _socialState.value.userProfile.uid
+        if (myUid.isBlank()) return
+
+        scope.launch {
+            runCatching {
+                db.getReference("friendRequests").child(myUid).child(fromUid).removeValue().await()
+            }
+        }
+    }
+
+    private fun attachFriendRequestsListener(db: FirebaseDatabase, myUid: String) {
+        val reqRef = db.getReference("friendRequests").child(myUid)
+        friendRequestsListener?.let { reqRef.removeEventListener(it) }
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val requests = snapshot.children.mapNotNull { child ->
+                    val fromUid = child.child("fromUid").getValue(String::class.java)
+                        ?: child.key
+                        ?: return@mapNotNull null
+                    val fromNickname = child.child("fromNickname").getValue(String::class.java) ?: "Player"
+                    val fromCode = child.child("fromCode").getValue(String::class.java) ?: ""
+                    val fromSkinId = child.child("fromSkinId").getValue(String::class.java) ?: "classic"
+                    val timestamp = child.child("timestamp").getValue(Long::class.java) ?: 0L
+                    FriendRequest(
+                        fromUid = fromUid,
+                        fromNickname = fromNickname,
+                        fromCode = fromCode,
+                        fromSkinId = fromSkinId,
+                        timestamp = timestamp
+                    )
+                }.sortedByDescending { it.timestamp }
+
+                _socialState.update { it.copy(pendingFriendRequests = requests) }
+            }
+
+            override fun onCancelled(error: DatabaseError) = Unit
+        }
+        friendRequestsListener = listener
+        reqRef.addValueEventListener(listener)
+    }
+
+    private fun attachAcceptedRequestsListener(db: FirebaseDatabase, myUid: String) {
+        val acceptedRef = db.getReference("acceptedRequests").child(myUid)
+        acceptedRequestsListener?.let { acceptedRef.removeEventListener(it) }
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists()) return
+                scope.launch {
+                    for (child in snapshot.children) {
+                        val friendUid = child.child("friendUid").getValue(String::class.java)
+                            ?: child.key
+                            ?: continue
+                        val friendNickname = child.child("friendNickname").getValue(String::class.java) ?: "Player"
+                        val friendCode = child.child("friendCode").getValue(String::class.java) ?: ""
+                        val friendSkinId = child.child("friendSkinId").getValue(String::class.java) ?: "classic"
+
+                        runCatching {
+                            db.getReference("userFriends").child(myUid).child(friendUid).setValue(true).await()
+                            localStore.addOrUpdateFriend(
+                                SavedFriend(
+                                    uid = friendUid,
+                                    friendCode = friendCode,
+                                    nickname = friendNickname,
+                                    selectedSkinId = friendSkinId,
+                                    addedAtMillis = System.currentTimeMillis()
+                                )
+                            )
+                            acceptedRef.child(friendUid).removeValue().await()
+                            _socialState.update {
+                                it.copy(feedbackMessage = "$friendNickname accepted your friend request!")
+                            }
+                        }
+                    }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) = Unit
+        }
+        acceptedRequestsListener = listener
+        acceptedRef.addValueEventListener(listener)
+    }
+
+    private fun attachRoomInvitesListener(db: FirebaseDatabase, myUid: String) {
+        val invitesRef = db.getReference("roomInvites").child(myUid)
+        roomInvitesListener?.let { invitesRef.removeEventListener(it) }
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val invites = snapshot.children.mapNotNull { child ->
+                    val matchId = child.child("matchId").getValue(String::class.java)
+                        ?: child.key
+                        ?: return@mapNotNull null
+                    val hostUid = child.child("hostUid").getValue(String::class.java)
+                        ?: return@mapNotNull null
+                    val hostNickname = child.child("hostNickname").getValue(String::class.java)
+                        ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.nickname
+                        ?: "Friend"
+                    val hostSkinId = child.child("hostSkinId").getValue(String::class.java)
+                        ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.selectedSkinId
+                        ?: "classic"
+                    val modeRaw = child.child("mode").getValue(String::class.java)
+                    val mode = runCatching { GameMode.valueOf(modeRaw.orEmpty()) }
+                        .getOrDefault(GameMode.CO_OP)
+                    val timestamp = child.child("timestamp").getValue(Long::class.java) ?: 0L
+
+                    RoomInvite(
+                        matchId = matchId,
+                        hostUid = hostUid,
+                        hostNickname = hostNickname,
+                        hostSkinId = hostSkinId,
+                        mode = mode,
+                        timestamp = timestamp
+                    )
+                }.sortedByDescending { it.timestamp }
+
+                _socialState.update { it.copy(incomingRoomInvites = invites) }
+            }
+
+            override fun onCancelled(error: DatabaseError) = Unit
+        }
+        roomInvitesListener = listener
+        invitesRef.addValueEventListener(listener)
     }
 
     fun removeFriend(friendUid: String) {
@@ -573,6 +765,261 @@ class FirebaseSocialManager(
 
     fun clearFeedback() {
         _socialState.update { it.copy(feedbackMessage = null) }
+    }
+
+    fun createRoom(mode: GameMode) {
+        val db = database
+        val myProfile = _socialState.value.userProfile
+        val myUid = myProfile.uid
+        if (db == null || myUid.isBlank()) {
+            _socialState.update {
+                it.copy(
+                    matchmakingState = MatchmakingState.Error(
+                        "Firebase is not configured or connected yet. See FIREBASE_SETUP.md or use Local 2P Test."
+                    )
+                )
+            }
+            return
+        }
+
+        val matchId = "m_${myUid.take(8)}_${System.currentTimeMillis()}"
+        val room = MatchRoom(
+            matchId = matchId,
+            hostUid = myUid,
+            hostNickname = myProfile.nickname.ifBlank { "Host" },
+            hostSkinId = myProfile.selectedSkinId.ifBlank { "classic" },
+            guestUid = "",
+            guestNickname = "Waiting for friend...",
+            guestSkinId = "neon_cyber",
+            mode = mode,
+            state = "lobby",
+            createdAtMillis = System.currentTimeMillis(),
+            myRole = MatchRole.HOST
+        )
+
+        synchronized(pairingLock) {
+            isCreatingMatchAsHost = false
+            isAcceptingInviteAsGuest = false
+            activeMatchIdAsHost = matchId
+        }
+        clearSentRoomInvites()
+
+        scope.launch {
+            runCatching {
+                val matchRef = db.getReference("matches").child(matchId)
+                matchRef.onDisconnect().removeValue()
+
+                val matchPayload = mapOf(
+                    "matchId" to room.matchId,
+                    "hostUid" to room.hostUid,
+                    "hostNickname" to room.hostNickname,
+                    "hostSkinId" to room.hostSkinId,
+                    "mode" to room.mode.name,
+                    "state" to "lobby",
+                    "createdAt" to ServerValue.TIMESTAMP
+                )
+                matchRef.updateChildren(matchPayload).await()
+
+                attachHostMatchObserver(matchRef, room)
+
+                synchronized(pairingLock) {
+                    if (activeMatchIdAsHost == matchId) {
+                        _socialState.update {
+                            it.copy(
+                                matchmakingState = MatchmakingState.MatchFound(room),
+                                invitedFriendUids = emptySet()
+                            )
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                _socialState.update {
+                    it.copy(
+                        matchmakingState = MatchmakingState.Error(
+                            "Could not create room: ${error.localizedMessage ?: "Network error"}"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun attachHostMatchObserver(matchRef: DatabaseReference, initialRoom: MatchRoom) {
+        activeHostMatchListener?.let { prev ->
+            activeMatchIdAsHost?.let { prevId ->
+                database?.getReference("matches")?.child(prevId)?.removeEventListener(prev)
+            }
+        }
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists()) return
+                val guestUid = snapshot.child("guestUid").getValue(String::class.java).orEmpty()
+                if (guestUid.isBlank()) return
+                val guestNickname = snapshot.child("guestNickname").getValue(String::class.java)
+                    ?: savedFriendsCache.firstOrNull { it.uid == guestUid }?.nickname
+                    ?: "Guest"
+                val guestSkinId = snapshot.child("guestSkinId").getValue(String::class.java)
+                    ?: "neon_cyber"
+                val stateStr = snapshot.child("state").getValue(String::class.java) ?: "signaling"
+
+                val currentState = _socialState.value.matchmakingState as? MatchmakingState.MatchFound
+                    ?: return
+                if (currentState.room.matchId != initialRoom.matchId) return
+                val updatedRoom = currentState.room.copy(
+                    guestUid = guestUid,
+                    guestNickname = guestNickname,
+                    guestSkinId = guestSkinId,
+                    state = stateStr
+                )
+                if (updatedRoom != currentState.room) {
+                    _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(updatedRoom)) }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) = Unit
+        }
+        activeHostMatchListener = listener
+        matchRef.addValueEventListener(listener)
+    }
+
+    fun inviteFriendToRoom(friend: SavedFriend) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST) return
+
+        val matchRef = db.getReference("matches").child(room.matchId)
+        matchRef.onDisconnect().removeValue()
+        matchRef.updateChildren(
+            mapOf(
+                "matchId" to room.matchId,
+                "hostUid" to room.hostUid,
+                "hostNickname" to room.hostNickname,
+                "hostSkinId" to room.hostSkinId,
+                "mode" to room.mode.name
+            )
+        )
+
+        val inviteRef = db.getReference("roomInvites").child(friend.uid).child(room.matchId)
+        inviteRef.onDisconnect().removeValue()
+        val invitePayload = mapOf(
+            "matchId" to room.matchId,
+            "hostUid" to room.hostUid,
+            "hostNickname" to room.hostNickname,
+            "hostSkinId" to room.hostSkinId,
+            "mode" to room.mode.name,
+            "timestamp" to ServerValue.TIMESTAMP
+        )
+        inviteRef.setValue(invitePayload)
+        synchronized(sentRoomInviteRefs) {
+            sentRoomInviteRefs.add(inviteRef)
+        }
+        _socialState.update {
+            it.copy(invitedFriendUids = it.invitedFriendUids + friend.uid)
+        }
+    }
+
+    fun acceptRoomInvite(invite: RoomInvite) {
+        val db = database ?: return
+        val myProfile = _socialState.value.userProfile
+        val myUid = myProfile.uid
+        if (myUid.isBlank()) return
+
+        synchronized(pairingLock) {
+            if (isAcceptingInviteAsGuest) return
+            isAcceptingInviteAsGuest = true
+        }
+
+        scope.launch {
+            try {
+                // Delete invite from /roomInvites/{myUid}/{matchId}
+                runCatching {
+                    db.getReference("roomInvites").child(myUid).child(invite.matchId).removeValue().await()
+                }
+                _socialState.update { state ->
+                    state.copy(
+                        incomingRoomInvites = state.incomingRoomInvites.filterNot { it.matchId == invite.matchId }
+                    )
+                }
+
+                val matchRef = db.getReference("matches").child(invite.matchId)
+                val matchSnap = runCatching { matchRef.get().await() }.getOrNull()
+                if (matchSnap == null || !matchSnap.exists()) {
+                    _socialState.update {
+                        it.copy(feedbackMessage = "Room closed by host before joining")
+                    }
+                    return@launch
+                }
+
+                val hostUid = matchSnap.child("hostUid").getValue(String::class.java) ?: invite.hostUid
+                val hostNickname = matchSnap.child("hostNickname").getValue(String::class.java)
+                    ?: invite.hostNickname
+                val hostSkinId = matchSnap.child("hostSkinId").getValue(String::class.java)
+                    ?: invite.hostSkinId
+                val modeRaw = matchSnap.child("mode").getValue(String::class.java)
+                val mode = runCatching { GameMode.valueOf(modeRaw.orEmpty()) }.getOrDefault(invite.mode)
+
+                val myNickname = myProfile.nickname.ifBlank { "Player" }
+                val mySkinId = myProfile.selectedSkinId.ifBlank { "classic" }
+
+                matchRef.updateChildren(
+                    mapOf(
+                        "guestUid" to myUid,
+                        "guestNickname" to myNickname,
+                        "guestSkinId" to mySkinId,
+                        "state" to "signaling"
+                    )
+                ).await()
+
+                val guestRoom = MatchRoom(
+                    matchId = invite.matchId,
+                    hostUid = hostUid,
+                    hostNickname = hostNickname,
+                    hostSkinId = hostSkinId,
+                    guestUid = myUid,
+                    guestNickname = myNickname,
+                    guestSkinId = mySkinId,
+                    mode = mode,
+                    state = "signaling",
+                    createdAtMillis = System.currentTimeMillis(),
+                    myRole = MatchRole.GUEST
+                )
+
+                _socialState.update {
+                    it.copy(matchmakingState = MatchmakingState.MatchFound(guestRoom))
+                }
+            } catch (err: Exception) {
+                _socialState.update {
+                    it.copy(feedbackMessage = "Failed to join room: ${err.localizedMessage ?: "Network error"}")
+                }
+            } finally {
+                synchronized(pairingLock) {
+                    isAcceptingInviteAsGuest = false
+                }
+            }
+        }
+    }
+
+    fun declineRoomInvite(invite: RoomInvite) {
+        val db = database ?: return
+        val myUid = _socialState.value.userProfile.uid
+        _socialState.update { state ->
+            state.copy(incomingRoomInvites = state.incomingRoomInvites.filterNot { it.matchId == invite.matchId })
+        }
+        if (myUid.isNotBlank()) {
+            db.getReference("roomInvites").child(myUid).child(invite.matchId).removeValue()
+        }
+    }
+
+    fun leaveRoom() = cancelSearch()
+
+    private fun clearSentRoomInvites() {
+        val toRemove = synchronized(sentRoomInviteRefs) {
+            val copy = sentRoomInviteRefs.toList()
+            sentRoomInviteRefs.clear()
+            copy
+        }
+        toRemove.forEach { ref -> runCatching { ref.removeValue() } }
     }
 
     fun startSearch(mode: GameMode) {
@@ -619,13 +1066,23 @@ class FirebaseSocialManager(
         synchronized(pairingLock) {
             isCreatingMatchAsHost = false
             isAcceptingInviteAsGuest = false
-            _socialState.update { it.copy(matchmakingState = MatchmakingState.Idle) }
+            _socialState.update {
+                it.copy(
+                    matchmakingState = MatchmakingState.Idle,
+                    invitedFriendUids = emptySet()
+                )
+            }
         }
 
+        clearSentRoomInvites()
         if (db != null && myUid.isNotBlank()) {
             writePresence(db.getReference("presence").child(myUid), "online", null)
             db.getReference("invites").child(myUid).removeValue()
             activeMatchIdAsHost?.let { matchId ->
+                activeHostMatchListener?.let { listener ->
+                    db.getReference("matches").child(matchId).removeEventListener(listener)
+                }
+                activeHostMatchListener = null
                 db.getReference("matches").child(matchId).removeValue()
                 activeMatchIdAsHost = null
             }
@@ -747,10 +1204,19 @@ class FirebaseSocialManager(
     fun shutdown() {
         val db = database
         val myUid = _socialState.value.userProfile.uid
+        clearSentRoomInvites()
         if (db != null && myUid.isNotBlank()) {
             writePresence(db.getReference("presence").child(myUid), "offline", null)
             connectedListener?.let { db.getReference(".info/connected").removeEventListener(it) }
             invitesListener?.let { db.getReference("invites").child(myUid).removeEventListener(it) }
+            friendRequestsListener?.let { db.getReference("friendRequests").child(myUid).removeEventListener(it) }
+            acceptedRequestsListener?.let { db.getReference("acceptedRequests").child(myUid).removeEventListener(it) }
+            roomInvitesListener?.let { db.getReference("roomInvites").child(myUid).removeEventListener(it) }
+            activeMatchIdAsHost?.let { matchId ->
+                activeHostMatchListener?.let { listener ->
+                    db.getReference("matches").child(matchId).removeEventListener(listener)
+                }
+            }
             friendPresenceListeners.forEach { (friendUid, listener) ->
                 db.getReference("presence").child(friendUid).removeEventListener(listener)
             }

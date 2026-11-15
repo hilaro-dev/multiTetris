@@ -79,7 +79,27 @@ Open the **Rules** tab of your Realtime Database, paste the exact JSON below, an
     "userFriends": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        "$friendUid": {
+          ".write": "auth != null && (auth.uid === $uid || (auth.uid === $friendUid && newData.exists() && (root.child('friendRequests').child(auth.uid).child($uid).exists() || root.child('acceptedRequests').child($uid).child(auth.uid).exists())))"
+        }
+      }
+    },
+
+    "friendRequests": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$senderUid": {
+          ".write": "auth != null && ((auth.uid === $senderUid && (!newData.exists() || (newData.hasChildren(['fromUid', 'fromNickname', 'fromCode', 'fromSkinId', 'timestamp']) && newData.child('fromUid').val() === auth.uid))) || (auth.uid === $uid && !newData.exists()))"
+        }
+      }
+    },
+
+    "acceptedRequests": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$friendUid": {
+          ".write": "auth != null && ((auth.uid === $uid && !newData.exists()) || (auth.uid === $friendUid && (!newData.exists() || root.child('friendRequests').child(auth.uid).child($uid).exists() || root.child('userFriends').child($uid).child(auth.uid).exists())))"
+        }
       }
     },
 
@@ -91,17 +111,19 @@ Open the **Rules** tab of your Realtime Database, paste the exact JSON below, an
       }
     },
 
-    "invites": {
+    "roomInvites": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && (auth.uid === $uid || (newData.exists() && newData.child('hostUid').val() === auth.uid && root.child('userFriends').child(auth.uid).child($uid).exists()))"
+        "$matchId": {
+          ".write": "auth != null && (auth.uid === $uid || ((root.child('userFriends').child(auth.uid).child($uid).exists() || root.child('userFriends').child($uid).child(auth.uid).exists()) && ((newData.exists() && newData.child('hostUid').val() === auth.uid && newData.hasChildren(['matchId', 'hostUid', 'hostNickname', 'hostSkinId', 'mode', 'timestamp'])) || (!newData.exists() && data.child('hostUid').val() === auth.uid))))"
+        }
       }
     },
 
     "matches": {
       "$matchId": {
-        ".read": "auth != null && (data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid)",
-        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid)"
+        ".read": "auth != null && (data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || root.child('roomInvites').child(auth.uid).child($matchId).exists() || (data.child('hostUid').exists() && (!data.child('guestUid').exists() || data.child('guestUid').val() === '') && (root.child('userFriends').child(data.child('hostUid').val()).child(auth.uid).exists() || root.child('userFriends').child(auth.uid).child(data.child('hostUid').val()).exists())))",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || (data.exists() && (!data.child('guestUid').exists() || data.child('guestUid').val() === '') && newData.child('guestUid').val() === auth.uid && (root.child('roomInvites').child(auth.uid).child($matchId).exists() || root.child('userFriends').child(data.child('hostUid').val()).child(auth.uid).exists() || root.child('userFriends').child(auth.uid).child(data.child('hostUid').val()).exists())))"
       }
     }
   }
@@ -111,4 +133,5 @@ Open the **Rules** tab of your Realtime Database, paste the exact JSON below, an
 ### How These Rules Protect Players
 - **`/users/$uid` & `/presence/$uid`:** Players can only write their own profile and presence nodes, and can only read their own node or nodes belonging to UIDs in their `/userFriends/{myUid}` list.
 - **`/friendCodes/$code`:** Authenticated players can look up an exact `MT-XXXXX` code without listing the entire `/friendCodes` root, and cannot overwrite another player's claimed code.
-- **`/invites/$uid` & `/matches/$matchId`:** Only saved friends can deliver match invites, and only the host or guest of a match can read or update its signaling room node.
+- **`/friendRequests/$uid/$senderUid`, `/acceptedRequests/$uid/$friendUid` & `/userFriends/$uid/$friendUid`:** Only the authenticated sender can write a friend request to a target user, only the recipient can read or decline/clear pending requests, and mutual `/userFriends` writes are authorized when accepting an active request.
+- **`/roomInvites/$uid/$matchId` & `/matches/$matchId`:** Only mutual saved friends can deliver or cancel room invites, recipients control joining or declining invites, and only the host, assigned guest, or invited friend claiming an open guest slot can read or update a match signaling node.

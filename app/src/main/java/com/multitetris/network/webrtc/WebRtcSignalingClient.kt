@@ -117,7 +117,12 @@ class WebRtcSignalingClient(
             pendingIceQueue.reset()
         }
 
-        _signalState.value = WebRtcSignalState.Connecting(room)
+        val statusText = if (room.myRole == MatchRole.HOST && room.guestUid.isBlank()) {
+            "Room ready — invite an online friend..."
+        } else {
+            "Exchanging SDP & ICE candidates..."
+        }
+        _signalState.value = WebRtcSignalState.Connecting(room, statusText)
 
         val db = runCatching { FirebaseDatabase.getInstance() }.getOrNull()
         if (db == null) {
@@ -158,12 +163,35 @@ class WebRtcSignalingClient(
             peerConnection = pc
         }
 
-        startConnectionTimeout(token, room, roomMatchRef)
-
         if (room.myRole == MatchRole.HOST) {
+            if (room.guestUid.isNotBlank()) {
+                startConnectionTimeout(token, room, roomMatchRef)
+            }
             startHostSignaling(token, pc, room, roomMatchRef)
         } else {
+            startConnectionTimeout(token, room, roomMatchRef)
             startGuestSignaling(token, pc, room, roomMatchRef)
+        }
+    }
+
+    fun updateRoom(updatedRoom: MatchRoom) {
+        val prevRoom: MatchRoom?
+        val roomRef: DatabaseReference?
+        synchronized(connectionLock) {
+            prevRoom = activeRoom
+            if (prevRoom?.matchId != updatedRoom.matchId) return
+            activeRoom = updatedRoom
+            roomRef = matchRef
+        }
+        if (prevRoom?.guestUid.isNullOrBlank() && updatedRoom.guestUid.isNotBlank() && roomRef != null) {
+            val token = sessionCounter.get()
+            if (_signalState.value is WebRtcSignalState.Connecting) {
+                _signalState.value = WebRtcSignalState.Connecting(
+                    room = updatedRoom,
+                    statusText = "${updatedRoom.guestNickname} joined — connecting P2P..."
+                )
+                startConnectionTimeout(token, updatedRoom, roomRef)
+            }
         }
     }
 
@@ -198,6 +226,10 @@ class WebRtcSignalingClient(
                 if (sdpText.isNullOrBlank()) return
                 hasProcessedAnswer = true
                 Log.d(TAG, "Answer received [HOST] matchId=${room.matchId}")
+                if (timeoutJob == null) {
+                    val latestRoom = synchronized(connectionLock) { activeRoom ?: room }
+                    startConnectionTimeout(token, latestRoom, roomRef)
+                }
 
                 val remoteDesc = SessionDescription(SessionDescription.Type.ANSWER, sdpText)
                 pc.setRemoteDescription(
@@ -230,13 +262,12 @@ class WebRtcSignalingClient(
         sdpListener = answerValueListener
         answerRef.addValueEventListener(answerValueListener)
 
-        // 4. Ensure /matches/{matchId} already has hostUid & guestUid before creating Offer
-        roomRef.updateChildren(
-            mapOf(
-                "hostUid" to room.hostUid,
-                "guestUid" to room.guestUid
-            )
-        ).addOnSuccessListener {
+        // 4. Ensure /matches/{matchId} has hostUid (and non-blank guestUid) before creating Offer
+        val roomUpdates = mutableMapOf<String, Any>("hostUid" to room.hostUid)
+        if (room.guestUid.isNotBlank()) {
+            roomUpdates["guestUid"] = room.guestUid
+        }
+        roomRef.updateChildren(roomUpdates).addOnSuccessListener {
             if (sessionCounter.get() != token) return@addOnSuccessListener
             pc.createOffer(
                 SimpleSdpObserver(

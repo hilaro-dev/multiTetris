@@ -12,7 +12,10 @@ import com.multitetris.network.GameSessionController
 import com.multitetris.network.LocalSimulationSessionController
 import com.multitetris.network.NetworkSessionState
 import com.multitetris.network.social.FirebaseSocialManager
+import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchmakingState
+import com.multitetris.network.social.RoomInvite
+import com.multitetris.network.social.SavedFriend
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.network.webrtc.MultiplayerSessionManager
 import com.multitetris.network.webrtc.WebRtcSessionController
@@ -90,6 +93,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         localSessionController.stop()
                         _isMultiplayerSession.value = true
                         webRtcSessionController.connectRoom(room, social.userProfile)
+                    } else {
+                        webRtcSessionController.updateRoomMetadata(room)
                     }
                 } else if (connectedMatchId != null) {
                     connectedMatchId = null
@@ -268,7 +273,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addFriendByCode(codeInput: String) {
-        socialManager.addFriendByCode(codeInput)
+        socialManager.sendFriendRequestByCode(codeInput)
+    }
+
+    fun sendFriendRequest(codeInput: String) {
+        socialManager.sendFriendRequestByCode(codeInput)
+    }
+
+    fun acceptFriendRequest(request: FriendRequest) {
+        socialManager.acceptFriendRequest(request)
+    }
+
+    fun declineFriendRequest(fromUid: String) {
+        socialManager.declineFriendRequest(fromUid)
     }
 
     fun removeFriend(friendUid: String) {
@@ -279,6 +296,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         socialManager.clearFeedback()
     }
 
+    fun createRoom() {
+        socialManager.createRoom(_selectedMode.value)
+    }
+
+    fun inviteFriendToRoom(friend: SavedFriend) {
+        socialManager.inviteFriendToRoom(friend)
+    }
+
+    fun acceptRoomInvite(invite: RoomInvite) {
+        socialManager.acceptRoomInvite(invite)
+    }
+
+    fun declineRoomInvite(invite: RoomInvite) {
+        socialManager.declineRoomInvite(invite)
+    }
+
     fun startPlayTogetherSearch() {
         socialManager.startSearch(_selectedMode.value)
     }
@@ -287,7 +320,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         webRtcSessionController.stop()
         _isMultiplayerSession.value = false
         connectedMatchId = null
-        socialManager.cancelSearch()
+        socialManager.leaveRoom()
     }
 
     override fun onCleared() {
