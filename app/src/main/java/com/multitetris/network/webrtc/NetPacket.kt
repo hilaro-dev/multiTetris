@@ -7,7 +7,10 @@ import com.multitetris.game.GameState
 import com.multitetris.game.LockedCell
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
+import com.multitetris.game.VersusSubMode
+import com.multitetris.ui.skin.SkinCatalog
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -20,14 +23,17 @@ sealed interface NetPacket
 @SerialName("handshake")
 data class HandshakePacket(
     val nickname: String,
-    val skinId: String
+    val skinId: String,
+    val uid: String = "",
+    val slotIndex: Int = 0
 ) : NetPacket
 
 @Serializable
 @SerialName("input")
 data class InputPacket(
     val seq: Int,
-    val action: PlayerAction
+    val action: PlayerAction,
+    val playerId: Int = 2
 ) : NetPacket
 
 @Serializable
@@ -84,7 +90,12 @@ data class GameStatePacket(
     val isPaused: Boolean = false,
     val playerSkins: Map<Int, String> = emptyMap(),
     val lastClearedRowIndices: List<Int> = emptyList(),
-    val lineClearEventId: Long = 0L
+    val lineClearEventId: Long = 0L,
+    val playerCount: Int = 2,
+    val versusSubMode: String = VersusSubMode.FREE_FOR_ALL.name,
+    val playerTeams: Map<Int, String> = emptyMap(),
+    val winningTeam: String? = null,
+    val playerNames: Map<Int, String> = emptyMap()
 ) : NetPacket {
 
     fun toClientGameState(
@@ -93,7 +104,16 @@ data class GameStatePacket(
     ): GameState {
         val height = grid.size.coerceAtLeast(4)
         val width = grid.firstOrNull()?.size?.coerceAtLeast(4) ?: 10
-        val inferredPlayers = maxOf(2, activePieces.maxOfOrNull { it.playerId } ?: 2)
+        val inferredPlayers = maxOf(
+            playerCount,
+            when (width) {
+                16 -> 4
+                13, 12 -> 3
+                else -> 2
+            },
+            activePieces.maxOfOrNull { it.playerId } ?: 2,
+            playerTeams.keys.maxOrNull() ?: 2
+        )
         val config = BoardConfig(width = width, height = height, playerCount = inferredPlayers)
 
         val decodedGrid = grid.map { row ->
@@ -110,10 +130,20 @@ data class GameStatePacket(
             }
         }
         val sabotageUntil = sabotagedPlayerIds.associateWith { localClockMillis + 500L }
+        val resolvedSubMode = runCatching { VersusSubMode.valueOf(versusSubMode) }
+            .getOrDefault(VersusSubMode.FREE_FOR_ALL)
+        val resolvedTeams = playerTeams.mapValues { (_, raw) ->
+            runCatching { TeamColor.valueOf(raw) }.getOrDefault(TeamColor.NONE)
+        }
+        val resolvedWinningTeam = winningTeam?.let { raw ->
+            runCatching { TeamColor.valueOf(raw) }.getOrNull()
+        }
 
         return GameState(
             config = config,
             mode = mode,
+            versusSubMode = resolvedSubMode,
+            playerTeams = resolvedTeams,
             grid = decodedGrid,
             activePieces = activeMap,
             ghostPieces = ghostMap,
@@ -129,6 +159,7 @@ data class GameStatePacket(
             isPaused = isPaused,
             isGameOver = isGameOver,
             winnerPlayerId = gameOverWinnerId,
+            winningTeam = resolvedWinningTeam,
             topOutPlayerId = topOutPlayerId,
             statusMessage = statusMessage,
             lastClearedRowIndices = lastClearedRowIndices,
@@ -140,7 +171,8 @@ data class GameStatePacket(
         fun fromGameState(
             tick: Long,
             state: GameState,
-            nowMillis: Long
+            nowMillis: Long,
+            playerNames: Map<Int, String> = emptyMap()
         ): GameStatePacket {
             val encodedGrid = state.grid.map { row ->
                 IntArray(row.size) { col -> GridCellCodec.encode(row[col]) }
@@ -169,7 +201,12 @@ data class GameStatePacket(
                 isPaused = state.isPaused,
                 playerSkins = state.playerSkins,
                 lastClearedRowIndices = state.lastClearedRowIndices,
-                lineClearEventId = state.lineClearEventId
+                lineClearEventId = state.lineClearEventId,
+                playerCount = state.config.playerCount,
+                versusSubMode = state.versusSubMode.name,
+                playerTeams = state.playerTeams.mapValues { it.value.name },
+                winningTeam = state.winningTeam?.name,
+                playerNames = playerNames
             )
         }
     }
@@ -184,42 +221,36 @@ data class RematchRequestPacket(
 
 /**
  * Compact integer packing for board cells sent inside GameStatePacket.grid:
- * 0 = empty cell; non-zero = (playerId shl 12) | (tetrominoOrdinal shl 4) | skinCode
+ * 0 = empty cell; non-zero = (playerId shl 16) | ((tetrominoOrdinal + 1) shl 8) | skinCode
+ * Supports up to 255 skins (all 20 SkinCatalog skins + future skins) and 255 players.
  */
 object GridCellCodec {
-    private val skinToCode = mapOf(
-        "classic" to 1,
-        "neon_cyber" to 2,
-        "golden_flex" to 3,
-        "obsidian_magma" to 4,
-        "hologram_glitch" to 5,
-        "pixel_crystal" to 6
-    )
-    private val codeToSkin = mapOf(
-        1 to "classic",
-        2 to "neon_cyber",
-        3 to "golden_flex",
-        4 to "obsidian_magma",
-        5 to "hologram_glitch",
-        6 to "pixel_crystal"
-    )
+    private val orderedSkinIds: List<String> = SkinCatalog.items.map { it.renderer.skinId }
+    private val skinToCode: Map<String, Int> = orderedSkinIds
+        .mapIndexed { index, skinId -> skinId to (index + 1) }
+        .toMap()
+    private val codeToSkin: Map<Int, String> = orderedSkinIds
+        .mapIndexed { index, skinId -> (index + 1) to skinId }
+        .toMap()
 
     fun encode(cell: LockedCell?): Int {
         if (cell == null) return 0
-        val skinCode = skinToCode[cell.skinId] ?: 1
-        val typeOrdinal = cell.tetrominoType.ordinal and 0xFF
-        return (cell.playerId shl 12) or (typeOrdinal shl 4) or (skinCode and 0xF)
+        val skinCode = (skinToCode[cell.skinId] ?: 1) and 0xFF
+        val typeCode = (cell.tetrominoType.ordinal + 1) and 0xFF
+        val playerCode = cell.playerId.coerceIn(1, 255)
+        return (playerCode shl 16) or (typeCode shl 8) or skinCode
     }
 
     fun decode(packed: Int): LockedCell? {
         if (packed == 0) return null
-        val playerId = packed ushr 12
-        val typeOrdinal = (packed ushr 4) and 0xFF
-        val skinCode = packed and 0xF
+        val playerId = (packed ushr 16) and 0xFF
+        val typeOrdinal = ((packed ushr 8) and 0xFF) - 1
+        val skinCode = packed and 0xFF
         val type = TetrominoType.entries.getOrNull(typeOrdinal) ?: TetrominoType.I
-        val skinId = codeToSkin[skinCode] ?: "classic"
+        val resolvedPlayerId = playerId.coerceAtLeast(1)
+        val skinId = codeToSkin[skinCode] ?: GameState.defaultSkinForPlayer(resolvedPlayerId)
         return LockedCell(
-            playerId = playerId.coerceAtLeast(1),
+            playerId = resolvedPlayerId,
             tetrominoType = type,
             skinId = skinId
         )

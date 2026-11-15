@@ -2,9 +2,11 @@ package com.multitetris.economy
 
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 
 /**
- * Computes end-of-match coin payouts for Versus and Co-op modes.
+ * Computes end-of-match coin payouts for Co-op, Versus FFA (2-4P), and 2v2 Teams.
  */
 object MatchRewardCalculator {
 
@@ -33,10 +35,30 @@ object MatchRewardCalculator {
         }
 
         return if (gameState.mode == GameMode.VERSUS) {
-            val isWinner = gameState.winnerPlayerId == localPlayerId
-            val rawPlacement = if (isWinner) 60 else 25
+            val (rawPlacement, placementLabel) = when (gameState.versusSubMode) {
+                VersusSubMode.TEAMS_2V2 -> {
+                    val myTeam = gameState.playerTeams[localPlayerId] ?: TeamColor.NONE
+                    val isWinningTeam = gameState.winningTeam != null && myTeam == gameState.winningTeam
+                    if (isWinningTeam) {
+                        70 to "2v2 Team Victory"
+                    } else {
+                        30 to "2v2 Match Completed"
+                    }
+                }
+                VersusSubMode.FREE_FOR_ALL -> {
+                    val isWinner = gameState.winnerPlayerId == localPlayerId
+                    if (gameState.config.playerCount >= 3) {
+                        if (isWinner) {
+                            75 to "FFA Victory (${gameState.config.playerCount}P)"
+                        } else {
+                            30 to "FFA Runner-Up"
+                        }
+                    } else {
+                        if (isWinner) 60 to "Victory" else 25 to "Runner-up"
+                    }
+                }
+            }
             val placementCoins = if (isLocalTest) rawPlacement / 2 else rawPlacement
-            val placementLabel = if (isWinner) "Victory" else "Runner-up"
 
             val playerLines = gameState.playerLines[localPlayerId] ?: 0
             val rawLineBonus = playerLines * 5

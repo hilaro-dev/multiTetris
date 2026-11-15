@@ -122,8 +122,18 @@ Open the **Rules** tab of your Realtime Database, paste the exact JSON below, an
 
     "matches": {
       "$matchId": {
-        ".read": "auth != null && (data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || root.child('roomInvites').child(auth.uid).child($matchId).exists() || (data.child('hostUid').exists() && (!data.child('guestUid').exists() || data.child('guestUid').val() === '') && (root.child('userFriends').child(data.child('hostUid').val()).child(auth.uid).exists() || root.child('userFriends').child(auth.uid).child(data.child('hostUid').val()).exists())))",
-        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || (data.exists() && (!data.child('guestUid').exists() || data.child('guestUid').val() === '') && newData.child('guestUid').val() === auth.uid && (root.child('roomInvites').child(auth.uid).child($matchId).exists() || root.child('userFriends').child(data.child('hostUid').val()).child(auth.uid).exists() || root.child('userFriends').child(auth.uid).child(data.child('hostUid').val()).exists())))"
+        ".read": "auth != null && (data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || data.child('players').child(auth.uid).exists() || root.child('roomInvites').child(auth.uid).child($matchId).exists() || (data.child('hostUid').exists() && (root.child('userFriends').child(data.child('hostUid').val()).child(auth.uid).exists() || root.child('userFriends').child(auth.uid).child(data.child('hostUid').val()).exists())))",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid)",
+        "players": {
+          "$uid": {
+            ".write": "auth != null && (root.child('matches').child($matchId).child('hostUid').val() === auth.uid || (auth.uid === $uid && (data.exists() || root.child('roomInvites').child(auth.uid).child($matchId).exists() || root.child('userFriends').child(root.child('matches').child($matchId).child('hostUid').val()).child(auth.uid).exists() || root.child('userFriends').child(auth.uid).child(root.child('matches').child($matchId).child('hostUid').val()).exists())))"
+          }
+        },
+        "peers": {
+          "$uid": {
+            ".write": "auth != null && (root.child('matches').child($matchId).child('hostUid').val() === auth.uid || (auth.uid === $uid && (root.child('matches').child($matchId).child('players').child(auth.uid).exists() || root.child('matches').child($matchId).child('guestUid').val() === auth.uid)))"
+          }
+        }
       }
     }
   }
@@ -134,4 +144,4 @@ Open the **Rules** tab of your Realtime Database, paste the exact JSON below, an
 - **`/users/$uid` & `/presence/$uid`:** Players can only write their own profile and presence nodes, and can only read their own node or nodes belonging to UIDs in their `/userFriends/{myUid}` list.
 - **`/friendCodes/$code`:** Authenticated players can look up an exact `MT-XXXXX` code without listing the entire `/friendCodes` root, and cannot overwrite another player's claimed code.
 - **`/friendRequests/$uid/$senderUid`, `/acceptedRequests/$uid/$friendUid` & `/userFriends/$uid/$friendUid`:** Only the authenticated sender can write a friend request to a target user, only the recipient can read or decline/clear pending requests, and mutual `/userFriends` writes are authorized when accepting an active request.
-- **`/roomInvites/$uid/$matchId` & `/matches/$matchId`:** Only mutual saved friends can deliver or cancel room invites, recipients control joining or declining invites, and only the host, assigned guest, or invited friend claiming an open guest slot can read or update a match signaling node.
+- **`/roomInvites/$uid/$matchId` & `/matches/$matchId`:** Only mutual saved friends can deliver or cancel room invites, recipients control joining or declining invites, and up to 4 players in the room can read the match roster while each joined Guest can write only their own `/players/$uid` slot and `/peers/$uid` Star-Topology WebRTC signaling branch (and only the Host can modify teams, sub-mode, match state, or close the room).

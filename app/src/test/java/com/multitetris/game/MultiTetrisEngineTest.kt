@@ -300,23 +300,97 @@ class MultiTetrisEngineTest {
     }
 
     @Test
-    fun getSpawnColumns_supportsTwoAndThreePlayersDynamically() {
+    fun getSpawnColumns_supportsTwoThreeAndFourPlayersDynamically() {
         assertEquals(listOf(2, 6), BoardConfig.getSpawnColumns(playerCount = 2, boardWidth = 10))
-        assertEquals(listOf(1, 5, 9), BoardConfig.getSpawnColumns(playerCount = 3, boardWidth = 12))
+        assertEquals(listOf(1, 5, 9), BoardConfig.getSpawnColumns(playerCount = 3, boardWidth = 13))
+        assertEquals(listOf(1, 5, 9, 13), BoardConfig.getSpawnColumns(playerCount = 4, boardWidth = 16))
 
         val threePlayerConfig = BoardConfig.forPlayerCount(3)
-        assertEquals(12, threePlayerConfig.width)
+        assertEquals(13, threePlayerConfig.width)
         assertEquals(listOf(1, 5, 9), threePlayerConfig.spawnZones.map { it.spawnX })
+
+        val fourPlayerConfig = BoardConfig.forPlayerCount(4)
+        assertEquals(16, fourPlayerConfig.width)
+        assertEquals(listOf(1, 5, 9, 13), fourPlayerConfig.spawnZones.map { it.spawnX })
 
         val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
         val started = engine.startNewGame(
             mode = GameMode.CO_OP,
-            config = threePlayerConfig
+            config = fourPlayerConfig
         )
-        assertEquals(3, started.activePieces.size)
+        assertEquals(4, started.activePieces.size)
         assertEquals(1, started.activePieces[1]?.x)
         assertEquals(5, started.activePieces[2]?.x)
         assertEquals(9, started.activePieces[3]?.x)
+        assertEquals(13, started.activePieces[4]?.x)
+    }
+
+    @Test
+    fun versus2v2_sabotageOnlyTargetsOpposingTeamAndResolvesWinningTeam() {
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        val config = BoardConfig.forPlayerCount(4) // 16x20
+        val teams = mapOf(
+            1 to TeamColor.CYAN,
+            2 to TeamColor.CYAN,
+            3 to TeamColor.MAGENTA,
+            4 to TeamColor.MAGENTA
+        )
+
+        val grid = MutableList(20) { MutableList<LockedCell?>(16) { null } }
+        // Fill row 19 except columns 1..2 so P1 O-piece hard drop clears the row
+        for (c in 0 until 16) {
+            if (c !in 1..2) {
+                grid[19][c] = LockedCell(3, TetrominoType.I, "classic")
+            }
+        }
+        val p1 = ActivePiece(1, TetrominoType.O, 0, x = 1, y = 16, skinId = "classic")
+        val p2 = ActivePiece(2, TetrominoType.O, 0, x = 5, y = 2, skinId = "neon_cyber")
+        val p3 = ActivePiece(3, TetrominoType.O, 0, x = 9, y = 2, skinId = "golden_flex")
+        val p4 = ActivePiece(4, TetrominoType.O, 0, x = 13, y = 2, skinId = "obsidian_magma")
+
+        engine.setStateForTest(
+            GameState(
+                config = config,
+                mode = GameMode.VERSUS,
+                versusSubMode = VersusSubMode.TEAMS_2V2,
+                playerTeams = teams,
+                grid = grid.map { it.toList() },
+                activePieces = mapOf(1 to p1, 2 to p2, 3 to p3, 4 to p4),
+                nextPieces = mapOf(1 to TetrominoType.O, 2 to TetrominoType.O, 3 to TetrominoType.O, 4 to TetrominoType.O),
+                playerScores = mapOf(1 to 0, 2 to 0, 3 to 0, 4 to 0),
+                playerLines = mapOf(1 to 0, 2 to 0, 3 to 0, 4 to 0)
+            )
+        )
+
+        val now = 10_000L
+        val afterClear = engine.applyAction(1, PlayerAction.HARD_DROP, currentTimeMillis = now)
+        // Teammate P2 must NOT be sabotaged; opponents P3 & P4 must be sabotaged!
+        assertFalse(afterClear.isSabotaged(1, now + 100L))
+        assertFalse(afterClear.isSabotaged(2, now + 100L))
+        assertTrue(afterClear.isSabotaged(3, now + 100L))
+        assertTrue(afterClear.isSabotaged(4, now + 100L))
+
+        // Now stack P3 spawn zone to row 2 so P3 tops out and declares Team Cyan winner
+        val topOutGrid = MutableList(20) { MutableList<LockedCell?>(16) { null } }
+        for (r in 2 until 20) {
+            topOutGrid[r][9] = LockedCell(3, TetrominoType.O, "golden_flex")
+            topOutGrid[r][10] = LockedCell(3, TetrominoType.O, "golden_flex")
+        }
+        engine.setStateForTest(
+            afterClear.copy(
+                grid = topOutGrid.map { it.toList() },
+                activePieces = mapOf(
+                    1 to p1.copy(y = 4),
+                    2 to p2,
+                    3 to p3.copy(y = 0),
+                    4 to p4
+                )
+            )
+        )
+        val endState = engine.stepPlayerDown(3, currentTimeMillis = now + 200L)
+        assertTrue(endState.isGameOver)
+        assertEquals(3, endState.topOutPlayerId)
+        assertEquals(TeamColor.CYAN, endState.winningTeam)
     }
 
     @Test

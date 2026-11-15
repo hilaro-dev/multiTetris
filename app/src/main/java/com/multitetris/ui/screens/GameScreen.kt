@@ -1,11 +1,16 @@
 package com.multitetris.ui.screens
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -55,11 +60,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.animateIntAsState
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,16 +76,20 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.economy.MatchRewardBreakdown
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
+import com.multitetris.game.VersusSubMode
 import com.multitetris.network.ConnectionStatus
 import com.multitetris.network.NetworkSessionState
 import com.multitetris.network.SessionMode
@@ -98,6 +105,12 @@ import com.multitetris.ui.theme.SubtleBorder
 import com.multitetris.ui.theme.TextPrimary
 import com.multitetris.ui.theme.TextSecondary
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
 fun GameScreen(
     gameState: GameState,
@@ -112,144 +125,544 @@ fun GameScreen(
     onRestart: () -> Unit,
     onExitToHome: () -> Unit
 ) {
+    val playerCount = gameState.config.playerCount
+    val context = LocalContext.current
+    DisposableEffect(playerCount) {
+        val activity = context.findActivity()
+        if (playerCount >= 3) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
     val controlledPlayerId = networkState.controlledPlayerId
     val focusAccent = PlayerPalette.accentFor(controlledPlayerId)
+    val controlsEnabled = !gameState.isPaused &&
+        !gameState.isGameOver &&
+        networkState.status != ConnectionStatus.DISCONNECTED
 
-    Column(
+    if (playerCount >= 3) {
+        LandscapeGameLayout(
+            gameState = gameState,
+            networkState = networkState,
+            matchReward = matchReward,
+            controlledPlayerId = controlledPlayerId,
+            focusAccent = focusAccent,
+            controlsEnabled = controlsEnabled,
+            isMuted = isMuted,
+            onToggleMute = onToggleMute,
+            onSwitchFocus = onSwitchFocus,
+            onSelectFocusPlayer = onSelectFocusPlayer,
+            onAction = onAction,
+            onTogglePause = onTogglePause,
+            onRestart = onRestart,
+            onExitToHome = onExitToHome
+        )
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(ObsidianBg)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            TopControlBar(
+                controlledPlayerId = controlledPlayerId,
+                sessionMode = networkState.sessionMode,
+                focusAccent = focusAccent,
+                isPaused = gameState.isPaused,
+                isMuted = isMuted,
+                onToggleMute = onToggleMute,
+                onBack = onExitToHome,
+                onSwitchFocus = onSwitchFocus,
+                onTogglePause = onTogglePause,
+                onRestart = onRestart
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            DualPlayerHud(
+                gameState = gameState,
+                networkState = networkState,
+                controlledPlayerId = controlledPlayerId,
+                onSelectPlayer = onSelectFocusPlayer
+            )
+
+            AnimatedVisibility(visible = networkState.activeSabotagedPlayerIds.isNotEmpty()) {
+                val targetId = networkState.activeSabotagedPlayerIds.firstOrNull()
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = ElectricGold.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, ElectricGold)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Bolt,
+                            contentDescription = null,
+                            tint = ElectricGold,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "SABOTAGE PUSH! P${targetId ?: ""} SPEED BURST (0.5s)",
+                            color = ElectricGold,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.6.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            BoardWithOverlays(
+                gameState = gameState,
+                networkState = networkState,
+                matchReward = matchReward,
+                controlledPlayerId = controlledPlayerId,
+                onTogglePause = onTogglePause,
+                onRestart = onRestart,
+                onExitToHome = onExitToHome,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            TouchControlsDeck(
+                controlledPlayerId = controlledPlayerId,
+                focusAccent = focusAccent,
+                enabled = controlsEnabled,
+                onAction = onAction
+            )
+        }
+    }
+}
+
+@Composable
+private fun LandscapeGameLayout(
+    gameState: GameState,
+    networkState: NetworkSessionState,
+    matchReward: MatchRewardBreakdown?,
+    controlledPlayerId: Int,
+    focusAccent: Color,
+    controlsEnabled: Boolean,
+    isMuted: Boolean,
+    onToggleMute: () -> Unit,
+    onSwitchFocus: () -> Unit,
+    onSelectFocusPlayer: (Int) -> Unit,
+    onAction: (PlayerAction) -> Unit,
+    onTogglePause: () -> Unit,
+    onRestart: () -> Unit,
+    onExitToHome: () -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    val playerCount = gameState.config.playerCount
+    val isTwoVTwo = gameState.mode == GameMode.VERSUS && gameState.versusSubMode == VersusSubMode.TEAMS_2V2
+
+    Row(
         modifier = Modifier
             .fillMaxSize()
             .background(ObsidianBg)
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        // Top bar: Back, Focus Toggle / P2P Role Badge, Mute, Pause, Restart
-        TopControlBar(
-            controlledPlayerId = controlledPlayerId,
-            sessionMode = networkState.sessionMode,
-            focusAccent = focusAccent,
-            isPaused = gameState.isPaused,
-            isMuted = isMuted,
-            onToggleMute = onToggleMute,
-            onBack = onExitToHome,
-            onSwitchFocus = onSwitchFocus,
-            onTogglePause = onTogglePause,
-            onRestart = onRestart
-        )
+        // Left Column: Mode/Team Scoreboard + P1 & P3 HUD + Left-Thumb Left/Right Controls
+        Column(
+            modifier = Modifier
+                .weight(0.28f)
+                .fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (isTwoVTwo) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = SlateSurface,
+                        border = BorderStroke(1.dp, SubtleBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "CYAN ${gameState.teamScore(TeamColor.CYAN)}",
+                                color = CyberCyan,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "2v2",
+                                color = TextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "MAG ${gameState.teamScore(TeamColor.MAGENTA)}",
+                                color = NeonMagenta,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = SlateSurface,
+                        border = BorderStroke(1.dp, SubtleBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${gameState.mode.label} ${playerCount}P",
+                                color = if (gameState.mode == GameMode.VERSUS) NeonMagenta else CyberCyan,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "LVL ${gameState.level} • ${gameState.sharedLines}L",
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
 
-        Spacer(modifier = Modifier.height(6.dp))
+                LandscapePlayerHudCard(
+                    gameState = gameState,
+                    networkState = networkState,
+                    playerId = 1,
+                    isFocused = controlledPlayerId == 1,
+                    onClick = { onSelectFocusPlayer(1) }
+                )
+                LandscapePlayerHudCard(
+                    gameState = gameState,
+                    networkState = networkState,
+                    playerId = 3,
+                    isFocused = controlledPlayerId == 3,
+                    onClick = { onSelectFocusPlayer(3) }
+                )
+            }
 
-        // Dual HUD + Next Piece previews
-        DualPlayerHud(
-            gameState = gameState,
-            networkState = networkState,
-            controlledPlayerId = controlledPlayerId,
-            onSelectPlayer = onSelectFocusPlayer
-        )
-
-        // Sabotage Push Alert banner when active in Versus
-        AnimatedVisibility(visible = networkState.activeSabotagedPlayerIds.isNotEmpty()) {
-            val targetId = networkState.activeSabotagedPlayerIds.firstOrNull()
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = ElectricGold.copy(alpha = 0.16f),
-                border = BorderStroke(1.dp, ElectricGold)
+            // Left-Thumb Directional Pad (LEFT + RIGHT)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Bolt,
-                        contentDescription = null,
-                        tint = ElectricGold,
-                        modifier = Modifier.size(16.dp)
+                ControlPadButton(
+                    modifier = Modifier.weight(1f),
+                    label = "LEFT",
+                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                    accent = focusAccent,
+                    enabled = controlsEnabled,
+                    onClick = { onAction(PlayerAction.MOVE_LEFT) }
+                )
+                ControlPadButton(
+                    modifier = Modifier.weight(1f),
+                    label = "RIGHT",
+                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    accent = focusAccent,
+                    enabled = controlsEnabled,
+                    onClick = { onAction(PlayerAction.MOVE_RIGHT) }
+                )
+            }
+        }
+
+        // Center Column: Compact Control Header + Wide 13x20 or 16x20 Board
+        Column(
+            modifier = Modifier
+                .weight(0.44f)
+                .fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            TopControlBar(
+                controlledPlayerId = controlledPlayerId,
+                sessionMode = networkState.sessionMode,
+                focusAccent = focusAccent,
+                isPaused = gameState.isPaused,
+                isMuted = isMuted,
+                onToggleMute = onToggleMute,
+                onBack = onExitToHome,
+                onSwitchFocus = onSwitchFocus,
+                onTogglePause = onTogglePause,
+                onRestart = onRestart
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            BoardWithOverlays(
+                gameState = gameState,
+                networkState = networkState,
+                matchReward = matchReward,
+                controlledPlayerId = controlledPlayerId,
+                onTogglePause = onTogglePause,
+                onRestart = onRestart,
+                onExitToHome = onExitToHome,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            )
+        }
+
+        // Right Column: P2 (& P4) HUD + Right-Thumb Rotate & Drop Controls
+        Column(
+            modifier = Modifier
+                .weight(0.28f)
+                .fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LandscapePlayerHudCard(
+                    gameState = gameState,
+                    networkState = networkState,
+                    playerId = 2,
+                    isFocused = controlledPlayerId == 2,
+                    onClick = { onSelectFocusPlayer(2) }
+                )
+                if (playerCount >= 4) {
+                    LandscapePlayerHudCard(
+                        gameState = gameState,
+                        networkState = networkState,
+                        playerId = 4,
+                        isFocused = controlledPlayerId == 4,
+                        onClick = { onSelectFocusPlayer(4) }
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "SABOTAGE PUSH! P${targetId ?: ""} SPEED BURST (0.5s)",
-                        color = ElectricGold,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.6.sp
+                }
+                if (networkState.activeSabotagedPlayerIds.isNotEmpty()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = ElectricGold.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, ElectricGold)
+                    ) {
+                        Text(
+                            text = "SABOTAGE P${networkState.activeSabotagedPlayerIds.joinToString(",")}!",
+                            color = ElectricGold,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            // Right-Thumb Action Pad (SOFT DROP, ROTATE, HARD DROP)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                ControlPadButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "HARD DROP",
+                    icon = Icons.Rounded.VerticalAlignBottom,
+                    accent = focusAccent,
+                    highlighted = true,
+                    enabled = controlsEnabled,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onAction(PlayerAction.HARD_DROP)
+                    }
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ControlPadButton(
+                        modifier = Modifier.weight(1f),
+                        label = "SOFT",
+                        icon = Icons.Rounded.KeyboardArrowDown,
+                        accent = focusAccent,
+                        enabled = controlsEnabled,
+                        onClick = { onAction(PlayerAction.SOFT_DROP) }
+                    )
+                    ControlPadButton(
+                        modifier = Modifier.weight(1f),
+                        label = "ROTATE",
+                        icon = Icons.AutoMirrored.Rounded.RotateRight,
+                        accent = focusAccent,
+                        enabled = controlsEnabled,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAction(PlayerAction.ROTATE_CW)
+                        }
                     )
                 }
             }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(8.dp))
+@Composable
+private fun LandscapePlayerHudCard(
+    gameState: GameState,
+    networkState: NetworkSessionState,
+    playerId: Int,
+    isFocused: Boolean,
+    onClick: () -> Unit
+) {
+    val team = gameState.playerTeams[playerId] ?: TeamColor.NONE
+    val showTeam = gameState.mode == GameMode.VERSUS &&
+        gameState.versusSubMode == VersusSubMode.TEAMS_2V2 &&
+        team != TeamColor.NONE
+    val accent = when {
+        showTeam && team == TeamColor.CYAN -> CyberCyan
+        showTeam && team == TeamColor.MAGENTA -> NeonMagenta
+        else -> PlayerPalette.accentFor(playerId)
+    }
+    val endpointName = networkState.players.firstOrNull { it.playerId == playerId }?.displayName
+        ?: "Player $playerId"
+    val isSabotaged = playerId in networkState.activeSabotagedPlayerIds
+    val scoreText = if (gameState.mode == GameMode.CO_OP) {
+        "Shared ${gameState.sharedScore}"
+    } else {
+        "${gameState.playerScores[playerId] ?: 0} pts"
+    }
 
-        // Main 10x20 Jetpack Compose Canvas Board
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (isFocused) accent.copy(alpha = 0.14f) else SlateSurface,
+        border = BorderStroke(
+            width = if (isFocused || isSabotaged) 1.5.dp else 1.dp,
+            color = when {
+                isSabotaged -> ElectricGold
+                isFocused -> accent
+                else -> SubtleBorder
+            }
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "P$playerId",
+                        color = accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = endpointName,
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = if (isSabotaged) "SPEED BURST!" else scoreText,
+                    color = if (isSabotaged) ElectricGold else TextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+            }
+            NextPiecePreviewCanvas(
+                tetrominoType = gameState.nextPieces[playerId],
+                playerId = playerId,
+                skinId = gameState.playerSkins[playerId] ?: GameState.defaultSkinForPlayer(playerId),
+                modifier = Modifier.size(28.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BoardWithOverlays(
+    gameState: GameState,
+    networkState: NetworkSessionState,
+    matchReward: MatchRewardBreakdown?,
+    controlledPlayerId: Int,
+    onTogglePause: () -> Unit,
+    onRestart: () -> Unit,
+    onExitToHome: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            BoxWithConstraints(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                val boardRatio = gameState.config.width.toFloat() / gameState.config.height.toFloat()
-                val sizeModifier = if (maxWidth / maxHeight > boardRatio) {
-                    Modifier
-                        .fillMaxHeight()
-                        .aspectRatio(boardRatio)
-                } else {
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(boardRatio)
-                }
-
-                Surface(
-                    modifier = sizeModifier,
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF060911),
-                    border = BorderStroke(1.5.dp, SubtleBorder)
-                ) {
-                    TetrisBoardCanvas(
-                        gameState = gameState,
-                        controlledPlayerId = controlledPlayerId,
-                        sabotagedPlayers = networkState.activeSabotagedPlayerIds,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+            val boardRatio = gameState.config.width.toFloat() / gameState.config.height.toFloat()
+            val sizeModifier = if (maxWidth / maxHeight > boardRatio) {
+                Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(boardRatio)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(boardRatio)
             }
 
-            if (networkState.status == ConnectionStatus.DISCONNECTED) {
-                DisconnectedOverlay(onReturnHome = onExitToHome)
-            } else if (gameState.isPaused && !gameState.isGameOver) {
-                PauseOverlay(
-                    onResume = onTogglePause,
-                    onRestart = onRestart,
-                    onExit = onExitToHome
-                )
-            } else if (gameState.isGameOver) {
-                GameOverOverlay(
+            Surface(
+                modifier = sizeModifier,
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF060911),
+                border = BorderStroke(1.5.dp, SubtleBorder)
+            ) {
+                TetrisBoardCanvas(
                     gameState = gameState,
-                    matchReward = matchReward,
-                    onPlayAgain = onRestart,
-                    onExit = onExitToHome
+                    controlledPlayerId = controlledPlayerId,
+                    sabotagedPlayers = networkState.activeSabotagedPlayerIds,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Responsive Touch Controls for the focused player
-        TouchControlsDeck(
-            controlledPlayerId = controlledPlayerId,
-            focusAccent = focusAccent,
-            enabled = !gameState.isPaused &&
-                !gameState.isGameOver &&
-                networkState.status != ConnectionStatus.DISCONNECTED,
-            onAction = onAction
-        )
+        if (networkState.status == ConnectionStatus.DISCONNECTED) {
+            DisconnectedOverlay(onReturnHome = onExitToHome)
+        } else if (gameState.isPaused && !gameState.isGameOver) {
+            PauseOverlay(
+                onResume = onTogglePause,
+                onRestart = onRestart,
+                onExit = onExitToHome
+            )
+        } else if (gameState.isGameOver) {
+            GameOverOverlay(
+                gameState = gameState,
+                matchReward = matchReward,
+                onPlayAgain = onRestart,
+                onExit = onExitToHome
+            )
+        }
     }
 }
 
@@ -320,11 +733,15 @@ private fun TopControlBar(
                         fontWeight = FontWeight.Bold
                     )
                 } else {
-                    val roleTag = if (sessionMode == SessionMode.HOST) "P1 HOST" else "P2 GUEST"
+                    val roleTag = if (sessionMode == SessionMode.HOST) {
+                        "P1 HOST"
+                    } else {
+                        "P$controlledPlayerId GUEST"
+                    }
                     Text(
-                        text = "P2P LIVE • $roleTag",
+                        text = "P2P • $roleTag",
                         color = TextPrimary,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 0.5.sp
                     )
@@ -939,12 +1356,19 @@ private fun GameOverOverlay(
     onExit: () -> Unit
 ) {
     val winnerId = gameState.winnerPlayerId
-    val title = if (gameState.mode == GameMode.VERSUS && winnerId != null) {
-        "PLAYER $winnerId WINS!"
-    } else {
-        "GAME OVER"
+    val winTeam = gameState.winningTeam
+    val isTwoVTwo = gameState.mode == GameMode.VERSUS && gameState.versusSubMode == VersusSubMode.TEAMS_2V2
+    val title = when {
+        isTwoVTwo && winTeam != null -> "${winTeam.label.uppercase()} WINS!"
+        gameState.mode == GameMode.VERSUS && winnerId != null -> "PLAYER $winnerId WINS!"
+        else -> "GAME OVER"
     }
-    val titleColor = if (winnerId != null) PlayerPalette.accentFor(winnerId) else NeonMagenta
+    val titleColor = when {
+        isTwoVTwo && winTeam == TeamColor.CYAN -> CyberCyan
+        isTwoVTwo && winTeam == TeamColor.MAGENTA -> NeonMagenta
+        winnerId != null -> PlayerPalette.accentFor(winnerId)
+        else -> NeonMagenta
+    }
 
     OverlayCard(title = title, titleColor = titleColor) {
         gameState.statusMessage?.let { msg ->
@@ -954,7 +1378,7 @@ private fun GameOverOverlay(
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
         if (gameState.mode == GameMode.CO_OP) {
@@ -965,9 +1389,20 @@ private fun GameOverOverlay(
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
-        } else {
+        } else if (isTwoVTwo) {
             Text(
-                text = "P1: ${gameState.playerScores[1] ?: 0} pts (${gameState.playerLines[1] ?: 0}L)  |  P2: ${gameState.playerScores[2] ?: 0} pts (${gameState.playerLines[2] ?: 0}L)",
+                text = "Team Cyan: ${gameState.teamScore(TeamColor.CYAN)} pts  |  Team Magenta: ${gameState.teamScore(TeamColor.MAGENTA)} pts",
+                color = TextPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        } else {
+            val summary = (1..gameState.config.playerCount).joinToString("  •  ") { pid ->
+                "P$pid: ${gameState.playerScores[pid] ?: 0}"
+            }
+            Text(
+                text = summary,
                 color = TextPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,

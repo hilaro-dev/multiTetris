@@ -1,6 +1,8 @@
 package com.multitetris.network.social
 
 import com.multitetris.game.GameMode
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import kotlinx.serialization.Serializable
 import kotlin.random.Random
 
@@ -104,6 +106,15 @@ enum class MatchRole {
     GUEST
 }
 
+data class RoomPlayerSlot(
+    val uid: String,
+    val nickname: String,
+    val skinId: String = "classic",
+    val slotIndex: Int = 1,
+    val team: TeamColor = TeamColor.NONE,
+    val ready: Boolean = true
+)
+
 data class MatchRoom(
     val matchId: String,
     val hostUid: String,
@@ -115,8 +126,43 @@ data class MatchRoom(
     val mode: GameMode,
     val state: String = "signaling",
     val createdAtMillis: Long = 0L,
-    val myRole: MatchRole
-)
+    val myRole: MatchRole,
+    val players: List<RoomPlayerSlot> = emptyList(),
+    val versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
+    val mySlotIndex: Int = if (myRole == MatchRole.HOST) 1 else 2
+) {
+    fun resolvedPlayers(): List<RoomPlayerSlot> {
+        if (players.isNotEmpty()) {
+            return players.sortedBy { it.slotIndex }
+        }
+        return buildList {
+            if (hostUid.isNotBlank()) {
+                add(
+                    RoomPlayerSlot(
+                        uid = hostUid,
+                        nickname = hostNickname,
+                        skinId = hostSkinId,
+                        slotIndex = 1,
+                        team = TeamColor.CYAN,
+                        ready = true
+                    )
+                )
+            }
+            if (guestUid.isNotBlank()) {
+                add(
+                    RoomPlayerSlot(
+                        uid = guestUid,
+                        nickname = guestNickname,
+                        skinId = guestSkinId,
+                        slotIndex = 2,
+                        team = TeamColor.MAGENTA,
+                        ready = true
+                    )
+                )
+            }
+        }
+    }
+}
 
 sealed interface MatchmakingState {
     data object Idle : MatchmakingState

@@ -12,6 +12,8 @@ import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import com.multitetris.network.GameSessionController
 import com.multitetris.network.LocalSimulationSessionController
 import com.multitetris.network.NetworkSessionState
@@ -48,6 +50,7 @@ data class MultiTetrisUiState(
     val economyState: EconomyUiState = EconomyUiState(),
     val lastMatchReward: MatchRewardBreakdown? = null,
     val webRtcSignalState: WebRtcSignalState = WebRtcSignalState.Idle,
+    val connectedPeerUids: Set<String> = emptySet(),
     val isMultiplayerSession: Boolean = false,
     val isMuted: Boolean = false
 ) {
@@ -82,6 +85,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private var rewardGrantedForCurrentMatch = false
     private var lastRecordedLinesForMissions = 0
 
+    private var lastLocalPlayerCount: Int = 2
+    private var lastLocalVersusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL
+
     private val activeGameStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
         if (isMultiplayer) webRtcSessionController.gameState else localSessionController.gameState
     }
@@ -89,6 +95,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val activeSessionStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
         if (isMultiplayer) webRtcSessionController.sessionState else localSessionController.sessionState
     }
+
+    private val webRtcCombinedFlow = combine(
+        webRtcSessionController.signalState,
+        webRtcSessionController.connectedPeerUids
+    ) { signal, peers -> signal to peers }
 
     private val economyStateFlow = combine(
         economyRepository.coinBalance,
@@ -105,7 +116,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     init {
         socialManager.initialize(defaultSkinId = ClassicSkinRenderer.SKIN_ID)
 
-        // Automatically start WebRTC P2P signaling when Stage 2 matchmaking finds a match
+        // Automatically start WebRTC P2P signaling when Stage 2/8 matchmaking creates/joins a room
         viewModelScope.launch {
             socialManager.socialState.collect { social ->
                 val matchState = social.matchmakingState
@@ -170,10 +181,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         if (breakdown.totalCoins > 0) {
                             economyRepository.addCoins(breakdown.totalCoins)
                         }
+                        val didWin = if (game.mode == GameMode.VERSUS) {
+                            if (game.versusSubMode == VersusSubMode.TEAMS_2V2) {
+                                game.winningTeam != null && game.playerTeams[localPlayerId] == game.winningTeam
+                            } else {
+                                game.winnerPlayerId == localPlayerId
+                            }
+                        } else {
+                            false
+                        }
                         economyRepository.recordMatchCompleted(
                             mode = game.mode,
                             isMultiplayer = isMultiplayer,
-                            didLocalPlayerWin = game.mode == GameMode.VERSUS && game.winnerPlayerId == localPlayerId
+                            didLocalPlayerWin = didWin
                         )
                     }
                 }
@@ -201,7 +221,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         socialManager.socialState,
         economyStateFlow,
         _lastMatchReward,
-        webRtcSessionController.signalState,
+        webRtcCombinedFlow,
         _isMultiplayerSession,
         _isMuted
     ) { values ->
@@ -213,7 +233,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val social = values[4] as SocialUiState
         val economy = values[5] as EconomyUiState
         val matchReward = values[6] as MatchRewardBreakdown?
-        val signal = values[7] as WebRtcSignalState
+        @Suppress("UNCHECKED_CAST")
+        val rtcPair = values[7] as Pair<WebRtcSignalState, Set<String>>
         val isMultiplayer = values[8] as Boolean
         val isMuted = values[9] as Boolean
 
@@ -235,7 +256,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             socialState = social,
             economyState = economy,
             lastMatchReward = matchReward,
-            webRtcSignalState = signal,
+            webRtcSignalState = rtcPair.first,
+            connectedPeerUids = rtcPair.second,
             isMultiplayerSession = isMultiplayer,
             isMuted = isMuted
         )
@@ -298,14 +320,48 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startLocal2PGame() {
+        startLocalTestGame(playerCount = 2, versusSubMode = VersusSubMode.FREE_FOR_ALL)
+    }
+
+    fun startLocalTestGame(
+        playerCount: Int = 2,
+        versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL
+    ) {
+        val clampedCount = playerCount.coerceIn(2, 4)
+        val resolvedSubMode = if (clampedCount == 4 && _selectedMode.value == GameMode.VERSUS) {
+            versusSubMode
+        } else {
+            VersusSubMode.FREE_FOR_ALL
+        }
+        lastLocalPlayerCount = clampedCount
+        lastLocalVersusSubMode = resolvedSubMode
+
         webRtcSessionController.stop()
         connectedMatchId = null
         _isMultiplayerSession.value = false
         resetMatchTracking()
+
+        val baseSkins = uiState.value.selectedSkins
+        val mergedSkins = (1..clampedCount).associateWith { pid ->
+            baseSkins[pid] ?: GameState.defaultSkinForPlayer(pid)
+        }
+        val defaultTeams = if (resolvedSubMode == VersusSubMode.TEAMS_2V2) {
+            mapOf(
+                1 to TeamColor.CYAN,
+                2 to TeamColor.CYAN,
+                3 to TeamColor.MAGENTA,
+                4 to TeamColor.MAGENTA
+            )
+        } else {
+            emptyMap()
+        }
+
         localSessionController.startSession(
             mode = _selectedMode.value,
-            playerSkins = uiState.value.selectedSkins,
-            config = BoardConfig(width = 10, height = 20, playerCount = 2)
+            playerSkins = mergedSkins,
+            config = BoardConfig.forPlayerCount(clampedCount),
+            versusSubMode = resolvedSubMode,
+            playerTeams = defaultTeams
         )
     }
 
@@ -313,7 +369,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (_isMultiplayerSession.value) {
             webRtcSessionController.requestRematch()
         } else {
-            startLocal2PGame()
+            startLocalTestGame(lastLocalPlayerCount, lastLocalVersusSubMode)
         }
     }
 
@@ -399,6 +455,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createRoom() {
         socialManager.createRoom(_selectedMode.value)
+    }
+
+    fun setRoomVersusSubMode(subMode: VersusSubMode) {
+        socialManager.setRoomVersusSubMode(subMode)
+    }
+
+    fun swapPlayerTeam(targetUid: String) {
+        socialManager.swapPlayerTeam(targetUid)
+    }
+
+    fun startRoomMatch() {
+        socialManager.startRoomMatch()
     }
 
     fun inviteFriendToRoom(friend: SavedFriend) {

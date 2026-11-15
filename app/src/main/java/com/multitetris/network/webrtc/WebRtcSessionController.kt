@@ -6,6 +6,8 @@ import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import com.multitetris.network.ConnectionStatus
 import com.multitetris.network.GameSessionController
 import com.multitetris.network.NetworkSessionState
@@ -25,17 +27,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Host-authoritative WebRTC P2P GameSessionController for Stage 3.
+ * Host-authoritative Star-Topology WebRTC P2P GameSessionController (Stage 8: 2-4 Players).
  *
- * - Host (Player 1, Col 2) runs the 60fps MultiTetrisEngine physics loop,
- *   applies local P1 inputs + incoming Guest InputPackets for P2, and broadcasts
- *   GameStatePacket updates at ~25Hz or immediately on state mutation.
- * - Guest (Player 2, Col 6) runs zero independent gravity/collision simulation,
- *   transmits InputPackets immediately, and renders incoming GameStatePackets.
+ * - Host (Slot 1) runs the 60fps MultiTetrisEngine physics loop, applies local P1 inputs +
+ *   incoming Guest InputPackets (Slots 2..4), and broadcasts GameStatePacket to all Guests at ~25Hz.
+ * - Guests (Slots 2..4) transmit InputPackets directly to the Host and render incoming GameStatePackets.
  */
 class WebRtcSessionController(
     context: Context,
@@ -45,12 +46,13 @@ class WebRtcSessionController(
 
     val signalingClient = WebRtcSignalingClient(context = context.applicationContext)
     val signalState: StateFlow<WebRtcSignalState> = signalingClient.signalState
+    val connectedPeerUids: StateFlow<Set<String>> = signalingClient.connectedPeerUids
 
     private val hostEngine = MultiTetrisEngine()
     private val guestGhostEngine = MultiTetrisEngine()
     private val engineLock = Any()
 
-    private val lastDropTimeMs = mutableMapOf<Int, Long>()
+    private val lastDropTimeMs = ConcurrentHashMap<Int, Long>()
     private val tickCounter = AtomicLong(0L)
     private val inputSeqCounter = AtomicInteger(0)
 
@@ -59,7 +61,8 @@ class WebRtcSessionController(
 
     private var currentRoom: MatchRoom? = null
     private var myProfile: UserProfile = UserProfile()
-    private val syncedSkins = mutableMapOf(1 to "classic", 2 to "neon_cyber")
+    private val syncedSkins = ConcurrentHashMap<Int, String>()
+    private val syncedNames = ConcurrentHashMap<Int, String>()
 
     private var observerJob: Job? = null
     private var packetJob: Job? = null
@@ -76,6 +79,7 @@ class WebRtcSessionController(
         if (currentRoom?.matchId == room.matchId &&
             (currentSignal is WebRtcSignalState.Connecting || currentSignal is WebRtcSignalState.Connected)
         ) {
+            updateRoomMetadata(room)
             return
         }
 
@@ -85,37 +89,19 @@ class WebRtcSessionController(
         lastReceivedTick = -1L
         tickCounter.set(0L)
         inputSeqCounter.set(0)
+        syncedSkins.clear()
+        syncedNames.clear()
 
-        syncedSkins[1] = if (room.myRole == MatchRole.HOST) {
-            localUserProfile.selectedSkinId.ifBlank { room.hostSkinId }
-        } else {
-            room.hostSkinId
-        }
-        syncedSkins[2] = if (room.myRole == MatchRole.GUEST) {
-            localUserProfile.selectedSkinId.ifBlank { room.guestSkinId }
-        } else {
-            room.guestSkinId
-        }
+        syncMapsFromRoom(room)
 
-        val myPlayerId = if (room.myRole == MatchRole.HOST) 1 else 2
+        val myPlayerId = room.mySlotIndex.coerceIn(1, 4)
         val sessionMode = if (room.myRole == MatchRole.HOST) SessionMode.HOST else SessionMode.CLIENT
 
         _sessionState.value = NetworkSessionState(
             sessionMode = sessionMode,
             status = ConnectionStatus.CONNECTING,
             controlledPlayerId = myPlayerId,
-            players = listOf(
-                PlayerEndpointState(
-                    playerId = 1,
-                    displayName = room.hostNickname,
-                    isLocalController = room.myRole == MatchRole.HOST
-                ),
-                PlayerEndpointState(
-                    playerId = 2,
-                    displayName = room.guestNickname,
-                    isLocalController = room.myRole == MatchRole.GUEST
-                )
-            ),
+            players = buildEndpointList(room),
             activeSabotagedPlayerIds = emptySet()
         )
 
@@ -126,30 +112,54 @@ class WebRtcSessionController(
     fun updateRoomMetadata(room: MatchRoom) {
         if (currentRoom?.matchId != room.matchId) return
         currentRoom = room
-        if (room.hostSkinId.isNotBlank()) {
-            syncedSkins[1] = room.hostSkinId
-        }
-        if (room.guestSkinId.isNotBlank()) {
-            syncedSkins[2] = room.guestSkinId
-        }
+        syncMapsFromRoom(room)
+
+        val myPlayerId = room.mySlotIndex.coerceIn(1, 4)
         _sessionState.update { state ->
             state.copy(
-                players = state.players.map { endpoint ->
-                    when (endpoint.playerId) {
-                        1 -> endpoint.copy(displayName = room.hostNickname)
-                        2 -> endpoint.copy(displayName = room.guestNickname)
-                        else -> endpoint
-                    }
-                }
+                controlledPlayerId = myPlayerId,
+                players = buildEndpointList(room)
             )
         }
         signalingClient.updateRoom(room)
     }
 
+    private fun syncMapsFromRoom(room: MatchRoom) {
+        val players = room.resolvedPlayers()
+        for (slot in players) {
+            val existingSkin = if (slot.uid == myProfile.uid && myProfile.selectedSkinId.isNotBlank()) {
+                myProfile.selectedSkinId
+            } else {
+                slot.skinId.ifBlank { GameState.defaultSkinForPlayer(slot.slotIndex) }
+            }
+            syncedSkins[slot.slotIndex] = existingSkin
+            val displayName = if (slot.uid == myProfile.uid && myProfile.nickname.isNotBlank()) {
+                myProfile.nickname
+            } else {
+                slot.nickname.ifBlank { "Player ${slot.slotIndex}" }
+            }
+            syncedNames[slot.slotIndex] = displayName
+        }
+    }
+
+    private fun buildEndpointList(room: MatchRoom): List<PlayerEndpointState> {
+        val myUid = myProfile.uid
+        return room.resolvedPlayers().map { slot ->
+            PlayerEndpointState(
+                playerId = slot.slotIndex,
+                displayName = syncedNames[slot.slotIndex] ?: slot.nickname.ifBlank { "Player ${slot.slotIndex}" },
+                isLocalController = (myUid.isNotBlank() && slot.uid == myUid) ||
+                    (slot.slotIndex == room.mySlotIndex)
+            )
+        }
+    }
+
     override fun startSession(
         mode: GameMode,
         playerSkins: Map<Int, String>,
-        config: BoardConfig
+        config: BoardConfig,
+        versusSubMode: VersusSubMode,
+        playerTeams: Map<Int, TeamColor>
     ) {
         val room = currentRoom ?: return
         if (room.myRole != MatchRole.HOST) return
@@ -165,7 +175,9 @@ class WebRtcSessionController(
                 mode = mode,
                 config = config,
                 playerSkins = playerSkins,
-                currentTimeMillis = now
+                currentTimeMillis = now,
+                versusSubMode = versusSubMode,
+                playerTeams = playerTeams
             )
         }
         publishHostStateAndBroadcast(initial, now, forceSend = true)
@@ -187,9 +199,9 @@ class WebRtcSessionController(
             }
             publishHostStateAndBroadcast(updated, now, forceSend = true)
         } else {
-            // Guest transmits inputs immediately without running local physics
             val seq = inputSeqCounter.incrementAndGet()
-            signalingClient.sendPacket(InputPacket(seq = seq, action = action))
+            val mySlot = room.mySlotIndex.coerceIn(2, 4)
+            signalingClient.sendPacket(InputPacket(seq = seq, action = action, playerId = mySlot))
         }
     }
 
@@ -197,21 +209,26 @@ class WebRtcSessionController(
         val room = currentRoom ?: return
         if (_sessionState.value.status != ConnectionStatus.CONNECTED) return
 
+        val players = room.resolvedPlayers()
+        val playerCount = players.size.coerceIn(2, 4)
         if (room.myRole == MatchRole.HOST) {
+            val teamsMap = players.associate { it.slotIndex to it.team }
             signalingClient.sendPacket(RematchRequestPacket(requestedByPlayerId = 1))
             startSession(
                 mode = room.mode,
                 playerSkins = syncedSkins.toMap(),
-                config = BoardConfig(width = 10, height = 20, playerCount = 2)
+                config = BoardConfig.forPlayerCount(playerCount),
+                versusSubMode = room.versusSubMode,
+                playerTeams = teamsMap
             )
         } else {
             lastReceivedTick = -1L
-            signalingClient.sendPacket(RematchRequestPacket(requestedByPlayerId = 2))
+            signalingClient.sendPacket(RematchRequestPacket(requestedByPlayerId = room.mySlotIndex))
         }
     }
 
     override fun switchControlledPlayer(playerId: Int) {
-        // Locked to local player's assigned role in multiplayer
+        // Locked to local player's assigned slot in multiplayer
     }
 
     override fun togglePause() {
@@ -277,30 +294,45 @@ class WebRtcSessionController(
 
         packetJob?.cancel()
         packetJob = scope.launch {
-            signalingClient.incomingPackets.collect { packet ->
-                handleIncomingPacket(packet)
+            signalingClient.peerIncomingPackets.collect { incoming ->
+                handleIncomingPeerPacket(incoming)
             }
         }
     }
 
     private fun onPeerConnected(room: MatchRoom) {
-        _sessionState.update { it.copy(status = ConnectionStatus.CONNECTED) }
+        currentRoom = room
+        syncMapsFromRoom(room)
+        val mySlot = room.mySlotIndex.coerceIn(1, 4)
+        _sessionState.update {
+            it.copy(
+                status = ConnectionStatus.CONNECTED,
+                controlledPlayerId = mySlot,
+                players = buildEndpointList(room)
+            )
+        }
 
-        val mySkin = if (room.myRole == MatchRole.HOST) {
-            syncedSkins[1] ?: myProfile.selectedSkinId
-        } else {
-            syncedSkins[2] ?: myProfile.selectedSkinId
-        }
-        val myNick = myProfile.nickname.ifBlank {
-            if (room.myRole == MatchRole.HOST) room.hostNickname else room.guestNickname
-        }
-        signalingClient.sendPacket(HandshakePacket(nickname = myNick, skinId = mySkin))
+        val mySkin = syncedSkins[mySlot] ?: myProfile.selectedSkinId.ifBlank { "classic" }
+        val myNick = syncedNames[mySlot] ?: myProfile.nickname.ifBlank { "Player $mySlot" }
+        signalingClient.sendPacket(
+            HandshakePacket(
+                nickname = myNick,
+                skinId = mySkin,
+                uid = myProfile.uid,
+                slotIndex = mySlot
+            )
+        )
 
         if (room.myRole == MatchRole.HOST) {
+            val players = room.resolvedPlayers()
+            val playerCount = players.size.coerceIn(2, 4)
+            val teamsMap = players.associate { it.slotIndex to it.team }
             startSession(
                 mode = room.mode,
                 playerSkins = syncedSkins.toMap(),
-                config = BoardConfig(width = 10, height = 20, playerCount = 2)
+                config = BoardConfig.forPlayerCount(playerCount),
+                versusSubMode = room.versusSubMode,
+                playerTeams = teamsMap
             )
         }
     }
@@ -321,16 +353,26 @@ class WebRtcSessionController(
         _sessionState.update { it.copy(status = ConnectionStatus.DISCONNECTED) }
     }
 
-    private fun handleIncomingPacket(packet: NetPacket) {
+    private fun handleIncomingPeerPacket(incoming: IncomingPeerPacket) {
         val room = currentRoom ?: return
+        val packet = incoming.packet
         when (packet) {
             is HandshakePacket -> {
-                val opponentPlayerId = if (room.myRole == MatchRole.HOST) 2 else 1
-                syncedSkins[opponentPlayerId] = packet.skinId
+                val resolvedSlot = if (room.myRole == MatchRole.HOST) {
+                    room.resolvedPlayers().firstOrNull { it.uid == incoming.fromUid }?.slotIndex
+                        ?: packet.slotIndex.takeIf { it in 2..4 }
+                        ?: incoming.slotIndex.coerceIn(2, 4)
+                } else {
+                    1
+                }
+                syncedSkins[resolvedSlot] = packet.skinId
+                if (packet.nickname.isNotBlank()) {
+                    syncedNames[resolvedSlot] = packet.nickname
+                }
                 _sessionState.update { state ->
                     state.copy(
                         players = state.players.map { endpoint ->
-                            if (endpoint.playerId == opponentPlayerId) {
+                            if (endpoint.playerId == resolvedSlot) {
                                 endpoint.copy(displayName = packet.nickname.ifBlank { endpoint.displayName })
                             } else {
                                 endpoint
@@ -341,7 +383,7 @@ class WebRtcSessionController(
                 if (room.myRole == MatchRole.HOST) {
                     val now = clockMillis()
                     val updated = synchronized(engineLock) {
-                        hostEngine.updatePlayerSkin(opponentPlayerId, packet.skinId)
+                        hostEngine.updatePlayerSkin(resolvedSlot, packet.skinId)
                     }
                     publishHostStateAndBroadcast(updated, now, forceSend = true)
                 }
@@ -349,11 +391,16 @@ class WebRtcSessionController(
 
             is InputPacket -> {
                 if (room.myRole != MatchRole.HOST) return
+                val targetSlot = room.resolvedPlayers()
+                    .firstOrNull { it.uid == incoming.fromUid }
+                    ?.slotIndex
+                    ?: incoming.slotIndex.takeIf { it in 2..4 }
+                    ?: packet.playerId.coerceIn(2, 4)
                 val now = clockMillis()
                 val updated = synchronized(engineLock) {
-                    val next = hostEngine.applyAction(2, packet.action, now)
+                    val next = hostEngine.applyAction(targetSlot, packet.action, now)
                     if (packet.action == PlayerAction.SOFT_DROP || packet.action == PlayerAction.HARD_DROP) {
-                        lastDropTimeMs[2] = now
+                        lastDropTimeMs[targetSlot] = now
                     }
                     next
                 }
@@ -371,17 +418,38 @@ class WebRtcSessionController(
                     localClockMillis = now
                 )
                 _gameState.value = clientState
+
+                if (packet.playerNames.isNotEmpty()) {
+                    packet.playerNames.forEach { (pid, name) -> syncedNames[pid] = name }
+                }
+                val mySlot = room.mySlotIndex.coerceIn(2, 4)
+                val refreshedEndpoints = (1..clientState.config.playerCount).map { pid ->
+                    PlayerEndpointState(
+                        playerId = pid,
+                        displayName = syncedNames[pid] ?: "Player $pid",
+                        isLocalController = pid == mySlot
+                    )
+                }
                 _sessionState.update {
-                    it.copy(activeSabotagedPlayerIds = packet.sabotagedPlayerIds)
+                    it.copy(
+                        controlledPlayerId = mySlot,
+                        players = refreshedEndpoints,
+                        activeSabotagedPlayerIds = packet.sabotagedPlayerIds
+                    )
                 }
             }
 
             is RematchRequestPacket -> {
                 if (room.myRole == MatchRole.HOST) {
+                    val players = room.resolvedPlayers()
+                    val playerCount = players.size.coerceIn(2, 4)
+                    val teamsMap = players.associate { it.slotIndex to it.team }
                     startSession(
                         mode = room.mode,
                         playerSkins = syncedSkins.toMap(),
-                        config = BoardConfig(width = 10, height = 20, playerCount = 2)
+                        config = BoardConfig.forPlayerCount(playerCount),
+                        versusSubMode = room.versusSubMode,
+                        playerTeams = teamsMap
                     )
                 } else {
                     lastReceivedTick = -1L
@@ -451,7 +519,12 @@ class WebRtcSessionController(
         if (forceSend) {
             lastBroadcastTimeMs = now
             val tick = tickCounter.incrementAndGet()
-            val packet = GameStatePacket.fromGameState(tick = tick, state = state, nowMillis = now)
+            val packet = GameStatePacket.fromGameState(
+                tick = tick,
+                state = state,
+                nowMillis = now,
+                playerNames = syncedNames.toMap()
+            )
             signalingClient.sendPacket(packet)
         }
     }

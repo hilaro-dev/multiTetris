@@ -3,6 +3,7 @@ package com.multitetris.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,9 +26,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HourglassEmpty
-import androidx.compose.material.icons.rounded.Hub
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -49,15 +52,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
+import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
+import com.multitetris.game.VersusSubMode
 import com.multitetris.network.social.FriendLivePresence
 import com.multitetris.network.social.MatchRole
 import com.multitetris.network.social.MatchRoom
 import com.multitetris.network.social.PresenceState
+import com.multitetris.network.social.RoomPlayerSlot
 import com.multitetris.network.social.SavedFriend
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.network.webrtc.WebRtcSignalState
@@ -73,54 +79,25 @@ import com.multitetris.ui.theme.SubtleBorder
 import com.multitetris.ui.theme.TextPrimary
 import com.multitetris.ui.theme.TextSecondary
 
-private data class LobbySlotUi(
-    val playerId: Int,
-    val spawnHint: String,
-    val roleLabel: String,
-    val nickname: String?,
-    val skinId: String
-)
-
 @Composable
 fun MatchLobbyScreen(
     room: MatchRoom,
     signalState: WebRtcSignalState,
     socialState: SocialUiState,
+    connectedPeerUids: Set<String> = emptySet(),
     onInviteFriend: (SavedFriend) -> Unit,
+    onSetVersusSubMode: (VersusSubMode) -> Unit = {},
+    onSwapPlayerTeam: (String) -> Unit = {},
+    onStartMatch: () -> Unit = {},
     onCancelLobby: () -> Unit
 ) {
     val modeAccent = if (room.mode == GameMode.VERSUS) NeonMagenta else CyberCyan
-    val isWaitingForGuest = room.myRole == MatchRole.HOST && room.guestUid.isBlank()
-
-    // Expandable slot list driven dynamically by BoardConfig spawn zones (defaults to 2 slots)
-    val boardConfig = BoardConfig(playerCount = 2)
-    val playerSlots = boardConfig.spawnZones.map { zone ->
-        when (zone.playerId) {
-            1 -> LobbySlotUi(
-                playerId = 1,
-                spawnHint = "Col ${zone.spawnX} (Zone ${zone.columnRange.first}–${zone.columnRange.last})",
-                roleLabel = if (room.myRole == MatchRole.HOST) "HOST (YOU)" else "HOST",
-                nickname = room.hostNickname,
-                skinId = room.hostSkinId
-            )
-
-            2 -> LobbySlotUi(
-                playerId = 2,
-                spawnHint = "Col ${zone.spawnX} (Zone ${zone.columnRange.first}–${zone.columnRange.last})",
-                roleLabel = if (room.myRole == MatchRole.GUEST) "GUEST (YOU)" else "GUEST",
-                nickname = if (room.guestUid.isNotBlank()) room.guestNickname else null,
-                skinId = room.guestSkinId
-            )
-
-            else -> LobbySlotUi(
-                playerId = zone.playerId,
-                spawnHint = "Col ${zone.spawnX} (Zone ${zone.columnRange.first}–${zone.columnRange.last})",
-                roleLabel = "PLAYER ${zone.playerId}",
-                nickname = null,
-                skinId = "classic"
-            )
-        }
-    }
+    val isHost = room.myRole == MatchRole.HOST
+    val resolvedPlayers = room.resolvedPlayers()
+    val playerBySlot = resolvedPlayers.associateBy { it.slotIndex }
+    val occupiedUids = resolvedPlayers.map { it.uid }.toSet()
+    val guestCount = (resolvedPlayers.size - 1).coerceAtLeast(0)
+    val isTwoVTwoActive = room.mode == GameMode.VERSUS && room.versusSubMode == VersusSubMode.TEAMS_2V2
 
     Box(
         modifier = Modifier
@@ -132,139 +109,248 @@ fun MatchLobbyScreen(
             )
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 18.dp, vertical = 14.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Status Header
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = modeAccent.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, modeAccent)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Bolt,
-                            contentDescription = null,
-                            tint = modeAccent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "${room.mode.label} ROOM • ${room.myRole.name}",
-                            color = modeAccent,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(
-                    text = if (isWaitingForGuest) "Room Lobby" else "Connecting P2P...",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = TextPrimary,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
+            // Top Header
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = modeAccent.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, modeAccent)
+            ) {
                 Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    if (!isWaitingForGuest) {
-                        CircularProgressIndicator(
-                            color = modeAccent,
-                            strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Hub,
-                            contentDescription = null,
-                            tint = ElectricGold,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    val statusMessage = when {
-                        isWaitingForGuest -> "Invite an online friend below to start"
-                        signalState is WebRtcSignalState.Connecting -> signalState.statusText
-                        signalState is WebRtcSignalState.Connected -> "WebRTC DataChannel OPEN! Launching..."
-                        signalState is WebRtcSignalState.TimeoutError -> "Direct P2P connection failed"
-                        signalState is WebRtcSignalState.Disconnected -> signalState.reason
-                        else -> "Preparing WebRTC peer connection..."
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.Bolt,
+                        contentDescription = null,
+                        tint = modeAccent,
+                        modifier = Modifier.size(15.dp)
+                    )
                     Text(
-                        text = statusMessage,
-                        color = TextSecondary,
-                        fontSize = 12.sp
+                        text = "${room.mode.label} LOBBY • ${resolvedPlayers.size}/4 PLAYERS",
+                        color = modeAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = if (isHost) "Multiplayer Room" else "Joined Room",
+                fontSize = 23.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = TextPrimary,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (signalState is WebRtcSignalState.Connecting) {
+                    CircularProgressIndicator(
+                        color = modeAccent,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                val statusMessage = when {
+                    isHost && guestCount == 0 -> "Invite 1 to 3 online friends below"
+                    isHost -> "P2P Ready: ${connectedPeerUids.size}/$guestCount • Ready to start (${resolvedPlayers.size}P)"
+                    signalState is WebRtcSignalState.Connecting -> signalState.statusText
+                    signalState is WebRtcSignalState.Connected -> "Launching match..."
+                    else -> "Preparing WebRTC link..."
+                }
+                Text(
+                    text = statusMessage,
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Player Slots (Expandable)
+            // 4-Player 2x2 Slot Grid
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "ROOM PLAYERS (${playerSlots.count { it.nickname != null }}/${playerSlots.size})",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
-                )
-                playerSlots.forEach { slot ->
-                    if (slot.nickname != null) {
-                        LobbyPlayerCard(
-                            playerId = slot.playerId,
-                            roleLabel = slot.roleLabel,
-                            nickname = slot.nickname,
-                            skinId = slot.skinId,
-                            spawnHint = slot.spawnHint
-                        )
-                    } else {
-                        WaitingSlotCard(
-                            playerId = slot.playerId,
-                            roleLabel = slot.roleLabel,
-                            spawnHint = slot.spawnHint
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LobbySlotGridItem(
+                        slotIndex = 1,
+                        player = playerBySlot[1],
+                        isMe = room.mySlotIndex == 1,
+                        isHostViewing = isHost,
+                        isPeerConnected = true,
+                        showTeams = isTwoVTwoActive,
+                        onSwapTeam = { playerBySlot[1]?.let { onSwapPlayerTeam(it.uid) } },
+                        modifier = Modifier.weight(1f)
+                    )
+                    LobbySlotGridItem(
+                        slotIndex = 2,
+                        player = playerBySlot[2],
+                        isMe = room.mySlotIndex == 2,
+                        isHostViewing = isHost,
+                        isPeerConnected = isSlotP2pReady(2, playerBySlot[2], room, connectedPeerUids),
+                        showTeams = isTwoVTwoActive,
+                        onSwapTeam = { playerBySlot[2]?.let { onSwapPlayerTeam(it.uid) } },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LobbySlotGridItem(
+                        slotIndex = 3,
+                        player = playerBySlot[3],
+                        isMe = room.mySlotIndex == 3,
+                        isHostViewing = isHost,
+                        isPeerConnected = isSlotP2pReady(3, playerBySlot[3], room, connectedPeerUids),
+                        showTeams = isTwoVTwoActive,
+                        onSwapTeam = { playerBySlot[3]?.let { onSwapPlayerTeam(it.uid) } },
+                        modifier = Modifier.weight(1f)
+                    )
+                    LobbySlotGridItem(
+                        slotIndex = 4,
+                        player = playerBySlot[4],
+                        isMe = room.mySlotIndex == 4,
+                        isHostViewing = isHost,
+                        isPeerConnected = isSlotP2pReady(4, playerBySlot[4], room, connectedPeerUids),
+                        showTeams = isTwoVTwoActive,
+                        onSwapTeam = { playerBySlot[4]?.let { onSwapPlayerTeam(it.uid) } },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            // Host-only 2v2 Teams vs Free-For-All toggle when Versus mode has 4 players
+            if (room.mode == GameMode.VERSUS && resolvedPlayers.size == 4) {
+                Spacer(modifier = Modifier.height(10.dp))
+                if (isHost) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = SlateSurface,
+                        border = BorderStroke(1.dp, SubtleBorder)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                VersusSubMode.entries.forEach { subMode ->
+                                    val selected = room.versusSubMode == subMode
+                                    Surface(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(38.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { onSetVersusSubMode(subMode) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (selected) modeAccent else Color.Transparent,
+                                        border = if (selected) null else BorderStroke(1.dp, SubtleBorder)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = subMode.label,
+                                                color = if (selected) Color.White else TextSecondary,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (room.versusSubMode == VersusSubMode.TEAMS_2V2) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.SwapHoriz,
+                                        contentDescription = null,
+                                        tint = ElectricGold,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Tap any player card above to swap Team Cyan / Magenta",
+                                        color = ElectricGold,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = SlateSurface,
+                        border = BorderStroke(1.dp, modeAccent.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Groups,
+                                contentDescription = null,
+                                tint = modeAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Versus Rule: ${room.versusSubMode.label}",
+                                color = TextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
 
-            // In-Lobby Friend Invite List for Host while waiting for a friend to join
-            if (room.myRole == MatchRole.HOST && room.guestUid.isBlank()) {
+            // Host Friend Invite List (available while fewer than 4 players in room)
+            if (isHost && resolvedPlayers.size < 4) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(top = 12.dp, bottom = 10.dp)
+                        .padding(top = 10.dp, bottom = 8.dp)
                 ) {
-                    val onlineCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
+                    val availableFriends = socialState.friends.filter { it.friend.uid !in occupiedUids }
+                    val onlineCount = availableFriends.count { it.state != PresenceState.OFFLINE }
                     Text(
-                        text = "INVITE FRIENDS ($onlineCount ONLINE)",
+                        text = "INVITE FRIENDS ($onlineCount ONLINE • ${4 - resolvedPlayers.size} SLOTS OPEN)",
                         color = CyberCyan,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp
+                        letterSpacing = 1.1.sp
                     )
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    if (socialState.friends.isEmpty()) {
+                    if (availableFriends.isEmpty()) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
@@ -272,10 +358,10 @@ fun MatchLobbyScreen(
                             border = BorderStroke(1.dp, SubtleBorder)
                         ) {
                             Text(
-                                text = "Add friends from the Friends drawer on the Home Screen to invite them directly into your room.",
+                                text = "Add friends in the Friends drawer on the Home Screen to invite up to 3 players.",
                                 color = TextSecondary,
                                 fontSize = 12.sp,
-                                modifier = Modifier.padding(14.dp)
+                                modifier = Modifier.padding(12.dp)
                             )
                         }
                     } else {
@@ -284,7 +370,7 @@ fun MatchLobbyScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(
-                                items = socialState.friends,
+                                items = availableFriends,
                                 key = { it.friend.uid }
                             ) { presence ->
                                 InLobbyFriendInviteRow(
@@ -302,58 +388,99 @@ fun MatchLobbyScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 10.dp),
+                        .padding(vertical = 8.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = SlateSurface),
                     border = BorderStroke(1.dp, SubtleBorder)
                 ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Text(
-                            text = "WEBRTC P2P SIGNALING",
-                            color = TextSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "Room ID: ${room.matchId}",
-                            color = TextPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "Channel: tetris-sync • ICE: STUN + TURN Relay",
+                            text = if (resolvedPlayers.size >= 3) {
+                                "LANDSCAPE MODE AUTO-ENABLED (${resolvedPlayers.size}P • ${if (resolvedPlayers.size == 3) "13×20" else "16×20"} BOARD)"
+                            } else {
+                                "STAR-TOPOLOGY WEBRTC • TURN RELAY ACTIVE"
+                            },
                             color = ElectricGold,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.8.sp
+                        )
+                        Text(
+                            text = if (isHost) {
+                                "All 4 slots filled! Tap Start Match when ready."
+                            } else {
+                                "Connected as Slot #${room.mySlotIndex}. Waiting for Host to start..."
+                            },
+                            color = TextSecondary,
+                            fontSize = 12.sp
                         )
                     }
                 }
             }
 
-            OutlinedButton(
-                onClick = onCancelLobby,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.2.dp, SubtleBorder)
+            // Bottom Actions: Start Match (Host with >= 2 players) + Leave Lobby
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Close,
-                    contentDescription = null,
-                    tint = TextPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Leave Room Lobby",
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Bold
-                )
+                if (isHost) {
+                    val canStart = resolvedPlayers.size >= 2 && connectedPeerUids.isNotEmpty()
+                    Button(
+                        onClick = onStartMatch,
+                        enabled = canStart,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = modeAccent,
+                            contentColor = if (modeAccent == NeonMagenta) Color.White else ObsidianBg,
+                            disabledContainerColor = SlateSurface,
+                            disabledContentColor = TextSecondary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = when {
+                                resolvedPlayers.size < 2 -> "Waiting for 1+ Friend to Join..."
+                                connectedPeerUids.isEmpty() -> "Establishing P2P Link..."
+                                else -> "START MATCH (${resolvedPlayers.size} PLAYERS)"
+                            },
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onCancelLobby,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.2.dp, SubtleBorder)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = null,
+                        tint = TextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Leave Room Lobby",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -392,10 +519,190 @@ fun MatchLobbyScreen(
                         contentColor = ObsidianBg
                     )
                 ) {
-                    Text("Back to Lobby", fontWeight = FontWeight.ExtraBold)
+                    Text("Back to Home", fontWeight = FontWeight.ExtraBold)
                 }
             }
         )
+    }
+}
+
+private fun isSlotP2pReady(
+    slotIndex: Int,
+    slot: RoomPlayerSlot?,
+    room: MatchRoom,
+    connectedPeerUids: Set<String>
+): Boolean {
+    if (slot == null) return false
+    if (room.myRole == MatchRole.HOST) {
+        return slotIndex == 1 || slot.uid in connectedPeerUids
+    }
+    return slotIndex == room.mySlotIndex || slot.uid in connectedPeerUids || connectedPeerUids.isNotEmpty()
+}
+
+@Composable
+private fun LobbySlotGridItem(
+    slotIndex: Int,
+    player: RoomPlayerSlot?,
+    isMe: Boolean,
+    isHostViewing: Boolean,
+    isPeerConnected: Boolean,
+    showTeams: Boolean,
+    onSwapTeam: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val slotAccent = if (showTeams && player != null) {
+        if (player.team == TeamColor.MAGENTA) NeonMagenta else CyberCyan
+    } else {
+        PlayerPalette.accentFor(slotIndex)
+    }
+
+    if (player == null) {
+        Card(
+            modifier = modifier.height(92.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = SlateSurface.copy(alpha = 0.55f)),
+            border = BorderStroke(1.dp, SubtleBorder)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SLOT #$slotIndex",
+                        color = slotAccent.copy(alpha = 0.65f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.HourglassEmpty,
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                Text(
+                    text = "Open Slot",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Invite a friend",
+                    color = TextSecondary.copy(alpha = 0.7f),
+                    fontSize = 10.sp
+                )
+            }
+        }
+        return
+    }
+
+    val renderer = SkinRegistry.resolve(player.skinId)
+    val previewType = when (slotIndex) {
+        1 -> TetrominoType.I
+        2 -> TetrominoType.T
+        3 -> TetrominoType.L
+        else -> TetrominoType.S
+    }
+    val canSwap = showTeams && isHostViewing
+
+    Card(
+        modifier = modifier
+            .height(92.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .then(
+                if (canSwap) Modifier.clickable(onClick = onSwapTeam) else Modifier
+            ),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = ElevatedCard),
+        border = BorderStroke(1.5.dp, slotAccent.copy(alpha = 0.8f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = buildString {
+                        append(if (slotIndex == 1) "HOST" else "P$slotIndex")
+                        if (isMe) append(" • YOU")
+                    },
+                    color = slotAccent,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                val readyColor = if (isPeerConnected) Color(0xFF2FE066) else ElectricGold
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(readyColor)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = player.nickname,
+                        color = TextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (showTeams) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = slotAccent.copy(alpha = 0.2f),
+                            border = BorderStroke(0.8.dp, slotAccent)
+                        ) {
+                            Text(
+                                text = if (player.team == TeamColor.MAGENTA) "TEAM MAGENTA" else "TEAM CYAN",
+                                color = slotAccent,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = if (isPeerConnected) "P2P Ready" else "Linking TURN...",
+                            color = if (isPeerConnected) Color(0xFF2FE066) else ElectricGold,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Canvas(modifier = Modifier.size(26.dp)) {
+                    with(renderer) {
+                        drawBlock(
+                            topLeft = Offset.Zero,
+                            size = Size(size.width, size.height),
+                            tetrominoType = previewType,
+                            playerId = slotIndex,
+                            isGhost = false
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -419,7 +726,7 @@ private fun InLobbyFriendInviteRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -428,7 +735,7 @@ private fun InLobbyFriendInviteRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                Canvas(modifier = Modifier.size(26.dp)) {
+                Canvas(modifier = Modifier.size(24.dp)) {
                     with(renderer) {
                         drawBlock(
                             topLeft = Offset.Zero,
@@ -444,7 +751,7 @@ private fun InLobbyFriendInviteRow(
                         text = presence.friend.nickname,
                         color = if (isOnline) TextPrimary else TextSecondary,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        fontSize = 13.sp
                     )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -459,7 +766,7 @@ private fun InLobbyFriendInviteRow(
                         Text(
                             text = if (isOnline) "Online • ${renderer.displayName}" else "Offline",
                             color = statusColor,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -472,8 +779,8 @@ private fun InLobbyFriendInviteRow(
                         onClick = {},
                         enabled = false,
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp),
                         border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.65f))
                     ) {
                         Icon(
@@ -484,7 +791,7 @@ private fun InLobbyFriendInviteRow(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Invited...",
+                            text = "Invited",
                             color = ElectricGold,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -494,8 +801,8 @@ private fun InLobbyFriendInviteRow(
                     Button(
                         onClick = onInvite,
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accent,
                             contentColor = if (accent == NeonMagenta) Color.White else ObsidianBg
@@ -513,119 +820,6 @@ private fun InLobbyFriendInviteRow(
                             fontWeight = FontWeight.ExtraBold
                         )
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WaitingSlotCard(
-    playerId: Int,
-    roleLabel: String,
-    spawnHint: String
-) {
-    val accent = PlayerPalette.accentFor(playerId)
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = SlateSurface.copy(alpha = 0.65f)),
-        border = BorderStroke(1.dp, SubtleBorder)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = roleLabel,
-                    color = accent.copy(alpha = 0.7f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Waiting for friend...",
-                    color = TextSecondary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Drop Zone: $spawnHint",
-                    color = TextSecondary.copy(alpha = 0.8f),
-                    fontSize = 11.sp
-                )
-            }
-            Icon(
-                imageVector = Icons.Rounded.HourglassEmpty,
-                contentDescription = null,
-                tint = TextSecondary,
-                modifier = Modifier.size(28.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun LobbyPlayerCard(
-    playerId: Int,
-    roleLabel: String,
-    nickname: String,
-    skinId: String,
-    spawnHint: String
-) {
-    val accent = PlayerPalette.accentFor(playerId)
-    val renderer = SkinRegistry.resolve(skinId)
-    val previewType = if (playerId == 1) TetrominoType.I else TetrominoType.T
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = ElevatedCard),
-        border = BorderStroke(1.5.dp, accent.copy(alpha = 0.7f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = roleLabel,
-                    color = accent,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = nickname,
-                    color = TextPrimary,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    text = "${renderer.displayName} Skin • $spawnHint",
-                    color = TextSecondary,
-                    fontSize = 11.sp
-                )
-            }
-
-            Canvas(modifier = Modifier.size(40.dp)) {
-                with(renderer) {
-                    drawBlock(
-                        topLeft = Offset.Zero,
-                        size = Size(size.width, size.height),
-                        tetrominoType = previewType,
-                        playerId = playerId,
-                        isGhost = false
-                    )
                 }
             }
         }

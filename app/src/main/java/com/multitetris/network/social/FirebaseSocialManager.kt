@@ -10,6 +10,8 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
 import com.multitetris.game.GameMode
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -59,7 +61,7 @@ class FirebaseSocialManager(
     private var friendRequestsListener: ValueEventListener? = null
     private var acceptedRequestsListener: ValueEventListener? = null
     private var roomInvitesListener: ValueEventListener? = null
-    private var activeHostMatchListener: ValueEventListener? = null
+    private var activeRoomListener: ValueEventListener? = null
     private val sentRoomInviteRefs = mutableListOf<DatabaseReference>()
 
     private val friendPresenceListeners = mutableMapOf<String, ValueEventListener>()
@@ -69,6 +71,8 @@ class FirebaseSocialManager(
     private var savedFriendsCache: List<SavedFriend> = emptyList()
 
     private var activeMatchIdAsHost: String? = null
+    private var activeObservedRoomId: String? = null
+    private var activeObservedRole: MatchRole? = null
     private var isCreatingMatchAsHost = false
     private var isAcceptingInviteAsGuest = false
 
@@ -783,24 +787,38 @@ class FirebaseSocialManager(
         }
 
         val matchId = "m_${myUid.take(8)}_${System.currentTimeMillis()}"
+        val myNickname = myProfile.nickname.ifBlank { "Host" }
+        val mySkinId = myProfile.selectedSkinId.ifBlank { "classic" }
+        val hostSlot = RoomPlayerSlot(
+            uid = myUid,
+            nickname = myNickname,
+            skinId = mySkinId,
+            slotIndex = 1,
+            team = TeamColor.CYAN,
+            ready = true
+        )
         val room = MatchRoom(
             matchId = matchId,
             hostUid = myUid,
-            hostNickname = myProfile.nickname.ifBlank { "Host" },
-            hostSkinId = myProfile.selectedSkinId.ifBlank { "classic" },
+            hostNickname = myNickname,
+            hostSkinId = mySkinId,
             guestUid = "",
             guestNickname = "Waiting for friend...",
             guestSkinId = "neon_cyber",
             mode = mode,
             state = "lobby",
             createdAtMillis = System.currentTimeMillis(),
-            myRole = MatchRole.HOST
+            myRole = MatchRole.HOST,
+            players = listOf(hostSlot),
+            versusSubMode = VersusSubMode.FREE_FOR_ALL,
+            mySlotIndex = 1
         )
 
         synchronized(pairingLock) {
             isCreatingMatchAsHost = false
             isAcceptingInviteAsGuest = false
             activeMatchIdAsHost = matchId
+            activeObservedRole = MatchRole.HOST
         }
         clearSentRoomInvites()
 
@@ -815,12 +833,21 @@ class FirebaseSocialManager(
                     "hostNickname" to room.hostNickname,
                     "hostSkinId" to room.hostSkinId,
                     "mode" to room.mode.name,
+                    "versusSubMode" to VersusSubMode.FREE_FOR_ALL.name,
                     "state" to "lobby",
-                    "createdAt" to ServerValue.TIMESTAMP
+                    "createdAt" to ServerValue.TIMESTAMP,
+                    "players" to mapOf(
+                        myUid to mapOf(
+                            "uid" to myUid,
+                            "nickname" to myNickname,
+                            "skinId" to mySkinId,
+                            "slotIndex" to 1,
+                            "team" to TeamColor.CYAN.name,
+                            "ready" to true
+                        )
+                    )
                 )
                 matchRef.updateChildren(matchPayload).await()
-
-                attachHostMatchObserver(matchRef, room)
 
                 synchronized(pairingLock) {
                     if (activeMatchIdAsHost == matchId) {
@@ -832,6 +859,7 @@ class FirebaseSocialManager(
                         }
                     }
                 }
+                attachRoomObserver(matchRef, room)
             }.onFailure { error ->
                 _socialState.update {
                     it.copy(
@@ -844,41 +872,139 @@ class FirebaseSocialManager(
         }
     }
 
-    private fun attachHostMatchObserver(matchRef: DatabaseReference, initialRoom: MatchRoom) {
-        activeHostMatchListener?.let { prev ->
-            activeMatchIdAsHost?.let { prevId ->
-                database?.getReference("matches")?.child(prevId)?.removeEventListener(prev)
+    private fun attachRoomObserver(matchRef: DatabaseReference, initialRoom: MatchRoom) {
+        val db = database ?: return
+        activeRoomListener?.let { prev ->
+            activeObservedRoomId?.let { prevId ->
+                db.getReference("matches").child(prevId).removeEventListener(prev)
             }
         }
+        activeObservedRoomId = initialRoom.matchId
+        activeObservedRole = initialRoom.myRole
+
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                if (!snapshot.exists()) return
-                val guestUid = snapshot.child("guestUid").getValue(String::class.java).orEmpty()
-                if (guestUid.isBlank()) return
-                val guestNickname = snapshot.child("guestNickname").getValue(String::class.java)
-                    ?: savedFriendsCache.firstOrNull { it.uid == guestUid }?.nickname
-                    ?: "Guest"
-                val guestSkinId = snapshot.child("guestSkinId").getValue(String::class.java)
-                    ?: "neon_cyber"
-                val stateStr = snapshot.child("state").getValue(String::class.java) ?: "signaling"
+                val myUid = _socialState.value.userProfile.uid
+                if (!snapshot.exists()) {
+                    if (initialRoom.myRole == MatchRole.GUEST && activeObservedRoomId == initialRoom.matchId) {
+                        activeObservedRoomId = null
+                        activeObservedRole = null
+                        activeRoomListener = null
+                        matchRef.removeEventListener(this)
+                        _socialState.update {
+                            it.copy(
+                                matchmakingState = MatchmakingState.Idle,
+                                feedbackMessage = "Host closed the room"
+                            )
+                        }
+                    }
+                    return
+                }
 
-                val currentState = _socialState.value.matchmakingState as? MatchmakingState.MatchFound
-                    ?: return
-                if (currentState.room.matchId != initialRoom.matchId) return
-                val updatedRoom = currentState.room.copy(
-                    guestUid = guestUid,
-                    guestNickname = guestNickname,
-                    guestSkinId = guestSkinId,
-                    state = stateStr
+                val currentFound = _socialState.value.matchmakingState as? MatchmakingState.MatchFound
+                val baseRoom = if (currentFound?.room?.matchId == initialRoom.matchId) {
+                    currentFound.room
+                } else {
+                    initialRoom
+                }
+
+                val hostUid = snapshot.child("hostUid").getValue(String::class.java) ?: baseRoom.hostUid
+                val hostNickname = snapshot.child("hostNickname").getValue(String::class.java)
+                    ?: baseRoom.hostNickname
+                val hostSkinId = snapshot.child("hostSkinId").getValue(String::class.java)
+                    ?: baseRoom.hostSkinId
+                val modeRaw = snapshot.child("mode").getValue(String::class.java)
+                val mode = runCatching { GameMode.valueOf(modeRaw.orEmpty()) }.getOrDefault(baseRoom.mode)
+                val subModeRaw = snapshot.child("versusSubMode").getValue(String::class.java)
+                val subMode = runCatching { VersusSubMode.valueOf(subModeRaw.orEmpty()) }
+                    .getOrDefault(baseRoom.versusSubMode)
+                val stateStr = snapshot.child("state").getValue(String::class.java) ?: baseRoom.state
+
+                val parsedPlayers = snapshot.child("players").children.mapNotNull { playerSnap ->
+                    val pUid = playerSnap.child("uid").getValue(String::class.java)
+                        ?: playerSnap.key.orEmpty()
+                    if (pUid.isBlank()) return@mapNotNull null
+                    val slotIndex = playerSnap.child("slotIndex").getValue(Int::class.java)
+                        ?: if (pUid == hostUid) 1 else 2
+                    val nickname = playerSnap.child("nickname").getValue(String::class.java)
+                        ?: savedFriendsCache.firstOrNull { it.uid == pUid }?.nickname
+                        ?: "Player $slotIndex"
+                    val skinId = playerSnap.child("skinId").getValue(String::class.java) ?: "classic"
+                    val teamRaw = playerSnap.child("team").getValue(String::class.java)
+                    val team = runCatching { TeamColor.valueOf(teamRaw.orEmpty()) }
+                        .getOrDefault(if (slotIndex <= 2) TeamColor.CYAN else TeamColor.MAGENTA)
+                    val ready = playerSnap.child("ready").getValue(Boolean::class.java) ?: true
+                    RoomPlayerSlot(
+                        uid = pUid,
+                        nickname = nickname,
+                        skinId = skinId,
+                        slotIndex = slotIndex,
+                        team = team,
+                        ready = ready
+                    )
+                }.sortedBy { it.slotIndex }
+
+                val legacyGuestUid = snapshot.child("guestUid").getValue(String::class.java).orEmpty()
+                val legacyGuestName = snapshot.child("guestNickname").getValue(String::class.java)
+                    ?: savedFriendsCache.firstOrNull { it.uid == legacyGuestUid }?.nickname
+                    ?: "Guest"
+                val legacyGuestSkin = snapshot.child("guestSkinId").getValue(String::class.java)
+                    ?: "neon_cyber"
+
+                val primaryGuest = parsedPlayers.firstOrNull { it.uid != hostUid }
+                val effectivePlayers = if (parsedPlayers.isNotEmpty()) {
+                    parsedPlayers
+                } else {
+                    buildList {
+                        add(
+                            RoomPlayerSlot(
+                                uid = hostUid,
+                                nickname = hostNickname,
+                                skinId = hostSkinId,
+                                slotIndex = 1,
+                                team = TeamColor.CYAN,
+                                ready = true
+                            )
+                        )
+                        if (legacyGuestUid.isNotBlank()) {
+                            add(
+                                RoomPlayerSlot(
+                                    uid = legacyGuestUid,
+                                    nickname = legacyGuestName,
+                                    skinId = legacyGuestSkin,
+                                    slotIndex = 2,
+                                    team = TeamColor.MAGENTA,
+                                    ready = true
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val mySlot = effectivePlayers.firstOrNull { it.uid == myUid }?.slotIndex
+                    ?: if (initialRoom.myRole == MatchRole.HOST) 1 else 2
+
+                val updatedRoom = baseRoom.copy(
+                    hostUid = hostUid,
+                    hostNickname = hostNickname,
+                    hostSkinId = hostSkinId,
+                    guestUid = primaryGuest?.uid ?: legacyGuestUid,
+                    guestNickname = primaryGuest?.nickname ?: legacyGuestName,
+                    guestSkinId = primaryGuest?.skinId ?: legacyGuestSkin,
+                    mode = mode,
+                    state = stateStr,
+                    players = effectivePlayers,
+                    versusSubMode = subMode,
+                    mySlotIndex = mySlot
                 )
-                if (updatedRoom != currentState.room) {
+                if (updatedRoom != currentFound?.room) {
                     _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(updatedRoom)) }
                 }
             }
 
             override fun onCancelled(error: DatabaseError) = Unit
         }
-        activeHostMatchListener = listener
+        activeRoomListener = listener
         matchRef.addValueEventListener(listener)
     }
 
@@ -919,6 +1045,64 @@ class FirebaseSocialManager(
         }
     }
 
+    fun setRoomVersusSubMode(subMode: VersusSubMode) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST) return
+
+        val matchRef = db.getReference("matches").child(room.matchId)
+        val updates = mutableMapOf<String, Any>(
+            "versusSubMode" to subMode.name
+        )
+        if (subMode == VersusSubMode.TEAMS_2V2) {
+            room.resolvedPlayers().forEachIndexed { idx, slot ->
+                val targetTeam = if (slot.team == TeamColor.NONE) {
+                    if (idx < 2) TeamColor.CYAN else TeamColor.MAGENTA
+                } else {
+                    slot.team
+                }
+                updates["players/${slot.uid}/team"] = targetTeam.name
+            }
+        }
+        matchRef.updateChildren(updates)
+    }
+
+    fun swapPlayerTeam(targetUid: String) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST || targetUid.isBlank()) return
+
+        val player = room.resolvedPlayers().firstOrNull { it.uid == targetUid } ?: return
+        val nextTeam = if (player.team == TeamColor.CYAN) TeamColor.MAGENTA else TeamColor.CYAN
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("players")
+            .child(targetUid)
+            .child("team")
+            .setValue(nextTeam.name)
+    }
+
+    fun startRoomMatch() {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST) return
+        if (room.resolvedPlayers().size < 2) {
+            _socialState.update {
+                it.copy(feedbackMessage = "Need at least 2 players to start!")
+            }
+            return
+        }
+
+        clearSentRoomInvites()
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("state")
+            .setValue("playing")
+    }
+
     fun acceptRoomInvite(invite: RoomInvite) {
         val db = database ?: return
         val myProfile = _socialState.value.userProfile
@@ -951,6 +1135,14 @@ class FirebaseSocialManager(
                     return@launch
                 }
 
+                val currentStateStr = matchSnap.child("state").getValue(String::class.java) ?: "lobby"
+                if (currentStateStr == "playing") {
+                    _socialState.update {
+                        it.copy(feedbackMessage = "Match has already started!")
+                    }
+                    return@launch
+                }
+
                 val hostUid = matchSnap.child("hostUid").getValue(String::class.java) ?: invite.hostUid
                 val hostNickname = matchSnap.child("hostNickname").getValue(String::class.java)
                     ?: invite.hostNickname
@@ -958,19 +1150,52 @@ class FirebaseSocialManager(
                     ?: invite.hostSkinId
                 val modeRaw = matchSnap.child("mode").getValue(String::class.java)
                 val mode = runCatching { GameMode.valueOf(modeRaw.orEmpty()) }.getOrDefault(invite.mode)
+                val subModeRaw = matchSnap.child("versusSubMode").getValue(String::class.java)
+                val subMode = runCatching { VersusSubMode.valueOf(subModeRaw.orEmpty()) }
+                    .getOrDefault(VersusSubMode.FREE_FOR_ALL)
 
-                val myNickname = myProfile.nickname.ifBlank { "Player" }
+                val existingPlayersSnap = matchSnap.child("players")
+                val existingSlotForMe = existingPlayersSnap.child(myUid)
+                    .child("slotIndex").getValue(Int::class.java)
+                val takenSlots = existingPlayersSnap.children.mapNotNull { snap ->
+                    snap.child("slotIndex").getValue(Int::class.java)
+                }.toMutableSet()
+                takenSlots.add(1) // Slot 1 always reserved for Host
+
+                val mySlotIndex = existingSlotForMe ?: (2..4).firstOrNull { it !in takenSlots }
+                if (mySlotIndex == null) {
+                    _socialState.update {
+                        it.copy(feedbackMessage = "Room is already full (4/4 players).")
+                    }
+                    return@launch
+                }
+
+                val myNickname = myProfile.nickname.ifBlank { "Player $mySlotIndex" }
                 val mySkinId = myProfile.selectedSkinId.ifBlank { "classic" }
+                val defaultTeam = if (mySlotIndex <= 2) TeamColor.CYAN else TeamColor.MAGENTA
 
-                matchRef.updateChildren(
-                    mapOf(
-                        "guestUid" to myUid,
-                        "guestNickname" to myNickname,
-                        "guestSkinId" to mySkinId,
-                        "state" to "signaling"
-                    )
-                ).await()
+                val playerRef = matchRef.child("players").child(myUid)
+                playerRef.onDisconnect().removeValue()
+                matchRef.child("peers").child(myUid).onDisconnect().removeValue()
 
+                val playerPayload = mapOf(
+                    "uid" to myUid,
+                    "nickname" to myNickname,
+                    "skinId" to mySkinId,
+                    "slotIndex" to mySlotIndex,
+                    "team" to defaultTeam.name,
+                    "ready" to true
+                )
+                playerRef.setValue(playerPayload).await()
+
+                val guestSlot = RoomPlayerSlot(
+                    uid = myUid,
+                    nickname = myNickname,
+                    skinId = mySkinId,
+                    slotIndex = mySlotIndex,
+                    team = defaultTeam,
+                    ready = true
+                )
                 val guestRoom = MatchRoom(
                     matchId = invite.matchId,
                     hostUid = hostUid,
@@ -980,14 +1205,31 @@ class FirebaseSocialManager(
                     guestNickname = myNickname,
                     guestSkinId = mySkinId,
                     mode = mode,
-                    state = "signaling",
+                    state = currentStateStr,
                     createdAtMillis = System.currentTimeMillis(),
-                    myRole = MatchRole.GUEST
+                    myRole = MatchRole.GUEST,
+                    players = listOf(
+                        RoomPlayerSlot(
+                            uid = hostUid,
+                            nickname = hostNickname,
+                            skinId = hostSkinId,
+                            slotIndex = 1,
+                            team = TeamColor.CYAN,
+                            ready = true
+                        ),
+                        guestSlot
+                    ),
+                    versusSubMode = subMode,
+                    mySlotIndex = mySlotIndex
                 )
 
+                synchronized(pairingLock) {
+                    activeObservedRole = MatchRole.GUEST
+                }
                 _socialState.update {
                     it.copy(matchmakingState = MatchmakingState.MatchFound(guestRoom))
                 }
+                attachRoomObserver(matchRef, guestRoom)
             } catch (err: Exception) {
                 _socialState.update {
                     it.copy(feedbackMessage = "Failed to join room: ${err.localizedMessage ?: "Network error"}")
@@ -1062,10 +1304,19 @@ class FirebaseSocialManager(
     fun cancelSearch() {
         val db = database
         val myUid = _socialState.value.userProfile.uid
+        val prevRoomId: String?
+        val prevHostMatchId: String?
+        val prevRole: MatchRole?
 
         synchronized(pairingLock) {
             isCreatingMatchAsHost = false
             isAcceptingInviteAsGuest = false
+            prevRoomId = activeObservedRoomId
+            prevHostMatchId = activeMatchIdAsHost
+            prevRole = activeObservedRole
+            activeObservedRoomId = null
+            activeMatchIdAsHost = null
+            activeObservedRole = null
             _socialState.update {
                 it.copy(
                     matchmakingState = MatchmakingState.Idle,
@@ -1078,13 +1329,21 @@ class FirebaseSocialManager(
         if (db != null && myUid.isNotBlank()) {
             writePresence(db.getReference("presence").child(myUid), "online", null)
             db.getReference("invites").child(myUid).removeValue()
-            activeMatchIdAsHost?.let { matchId ->
-                activeHostMatchListener?.let { listener ->
-                    db.getReference("matches").child(matchId).removeEventListener(listener)
+
+            val targetMatchId = prevHostMatchId ?: prevRoomId
+            if (!targetMatchId.isNullOrBlank()) {
+                val matchRef = db.getReference("matches").child(targetMatchId)
+                activeRoomListener?.let { listener ->
+                    matchRef.removeEventListener(listener)
                 }
-                activeHostMatchListener = null
-                db.getReference("matches").child(matchId).removeValue()
-                activeMatchIdAsHost = null
+                activeRoomListener = null
+
+                if (prevRole == MatchRole.HOST || prevHostMatchId != null) {
+                    matchRef.removeValue()
+                } else if (prevRole == MatchRole.GUEST) {
+                    matchRef.child("players").child(myUid).removeValue()
+                    matchRef.child("peers").child(myUid).removeValue()
+                }
             }
         }
     }
@@ -1212,11 +1471,12 @@ class FirebaseSocialManager(
             friendRequestsListener?.let { db.getReference("friendRequests").child(myUid).removeEventListener(it) }
             acceptedRequestsListener?.let { db.getReference("acceptedRequests").child(myUid).removeEventListener(it) }
             roomInvitesListener?.let { db.getReference("roomInvites").child(myUid).removeEventListener(it) }
-            activeMatchIdAsHost?.let { matchId ->
-                activeHostMatchListener?.let { listener ->
+            (activeObservedRoomId ?: activeMatchIdAsHost)?.let { matchId ->
+                activeRoomListener?.let { listener ->
                     db.getReference("matches").child(matchId).removeEventListener(listener)
                 }
             }
+            activeRoomListener = null
             friendPresenceListeners.forEach { (friendUid, listener) ->
                 db.getReference("presence").child(friendUid).removeEventListener(listener)
             }

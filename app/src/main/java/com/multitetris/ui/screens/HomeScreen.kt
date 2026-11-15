@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import com.multitetris.economy.EconomyUiState
 import com.multitetris.game.GameMode
 import com.multitetris.game.TetrominoType
+import com.multitetris.game.VersusSubMode
 import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.PresenceState
@@ -95,7 +96,7 @@ fun HomeScreen(
     onClearFriendFeedback: () -> Unit,
     onCreateRoom: () -> Unit,
     onCancelPlayTogetherSearch: () -> Unit,
-    onStartLocalTest: () -> Unit
+    onStartLocalTest: (playerCount: Int, subMode: VersusSubMode) -> Unit
 ) {
     var showFriendsSheet by remember { mutableStateOf(false) }
     var showMissionsSheet by remember { mutableStateOf(false) }
@@ -275,9 +276,9 @@ fun HomeScreen(
                             )
                             Text(
                                 text = if (onlineFriendsCount > 0) {
-                                    "Invite from $onlineFriendsCount online friend(s)"
+                                    "Invite up to 3 friends ($onlineFriendsCount online)"
                                 } else {
-                                    "Open Room Lobby & invite friends"
+                                    "Open 2–4P Room Lobby & invite friends"
                                 },
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Medium
@@ -315,21 +316,46 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Subtle Local 2P Test button at bottom
-            TextButton(onClick = onStartLocalTest) {
+            // Subtle Local Test selector at bottom (2P / 3P / 4P 2v2)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 Icon(
                     imageVector = Icons.Rounded.SportsEsports,
                     contentDescription = null,
                     tint = TextSecondary,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(16.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Local 2P Test",
+                    text = "Local Test:",
                     color = TextSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
                 )
+                TextButton(
+                    onClick = { onStartLocalTest(2, VersusSubMode.FREE_FOR_ALL) }
+                ) {
+                    Text("2P", color = CyberCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                TextButton(
+                    onClick = { onStartLocalTest(3, VersusSubMode.FREE_FOR_ALL) }
+                ) {
+                    Text("3P", color = ElectricGold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                TextButton(
+                    onClick = {
+                        val sub = if (selectedMode == GameMode.VERSUS) VersusSubMode.TEAMS_2V2 else VersusSubMode.FREE_FOR_ALL
+                        onStartLocalTest(4, sub)
+                    }
+                ) {
+                    Text(
+                        text = if (selectedMode == GameMode.VERSUS) "4P (2v2)" else "4P",
+                        color = NeonMagenta,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }

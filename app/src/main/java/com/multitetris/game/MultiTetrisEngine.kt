@@ -30,8 +30,10 @@ class MultiTetrisEngine(
     fun startNewGame(
         mode: GameMode,
         config: BoardConfig = BoardConfig(),
-        playerSkins: Map<Int, String> = mapOf(1 to "classic", 2 to "neon_cyber"),
-        currentTimeMillis: Long = 0L
+        playerSkins: Map<Int, String> = GameState.defaultPlayerSkins(config.playerCount),
+        currentTimeMillis: Long = 0L,
+        versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
+        playerTeams: Map<Int, TeamColor> = emptyMap()
     ): GameState {
         playerBags.clear()
         val emptyGrid = List(config.height) { List<LockedCell?>(config.width) { null } }
@@ -40,11 +42,29 @@ class MultiTetrisEngine(
         val scores = mutableMapOf<Int, Int>()
         val lines = mutableMapOf<Int, Int>()
 
+        val resolvedTeams: Map<Int, TeamColor> = if (mode == GameMode.VERSUS && versusSubMode == VersusSubMode.TEAMS_2V2) {
+            if (playerTeams.isNotEmpty()) {
+                config.spawnZones.associate { zone ->
+                    zone.playerId to (playerTeams[zone.playerId] ?: if (zone.playerId <= 2) TeamColor.CYAN else TeamColor.MAGENTA)
+                }
+            } else {
+                config.spawnZones.associate { zone ->
+                    zone.playerId to if (zone.playerId <= 2) TeamColor.CYAN else TeamColor.MAGENTA
+                }
+            }
+        } else {
+            config.spawnZones.associate { it.playerId to TeamColor.NONE }
+        }
+
+        val resolvedSkins = config.spawnZones.associate { zone ->
+            zone.playerId to (playerSkins[zone.playerId] ?: GameState.defaultSkinForPlayer(zone.playerId))
+        }
+
         for (zone in config.spawnZones) {
             val playerId = zone.playerId
             val firstType = drawFromBag(playerId)
             val nextType = drawFromBag(playerId)
-            val skinId = playerSkins[playerId] ?: defaultSkinFor(playerId)
+            val skinId = resolvedSkins[playerId] ?: GameState.defaultSkinForPlayer(playerId)
             activePieces[playerId] = ActivePiece(
                 playerId = playerId,
                 tetrominoType = firstType,
@@ -61,10 +81,12 @@ class MultiTetrisEngine(
         val initialState = GameState(
             config = config,
             mode = mode,
+            versusSubMode = if (mode == GameMode.VERSUS) versusSubMode else VersusSubMode.FREE_FOR_ALL,
+            playerTeams = resolvedTeams,
             grid = emptyGrid,
             activePieces = activePieces,
             nextPieces = nextPieces,
-            playerSkins = playerSkins,
+            playerSkins = resolvedSkins,
             sharedScore = 0,
             sharedLines = 0,
             level = 1,
@@ -75,6 +97,7 @@ class MultiTetrisEngine(
             isPaused = false,
             isGameOver = false,
             winnerPlayerId = null,
+            winningTeam = null,
             topOutPlayerId = null,
             statusMessage = null
         )
@@ -342,8 +365,14 @@ class MultiTetrisEngine(
 
             if (clearedCount > 0) {
                 val expiresAt = currentTimeMillis + SABOTAGE_DURATION_MS
+                val attackerTeam = state.playerTeams[piece.playerId] ?: TeamColor.NONE
                 for (zone in state.config.spawnZones) {
-                    if (zone.playerId != piece.playerId) {
+                    if (zone.playerId == piece.playerId) continue
+                    val targetTeam = state.playerTeams[zone.playerId] ?: TeamColor.NONE
+                    val isTeammate = state.versusSubMode == VersusSubMode.TEAMS_2V2 &&
+                        attackerTeam != TeamColor.NONE &&
+                        targetTeam == attackerTeam
+                    if (!isTeammate) {
                         newSabotageUntil[zone.playerId] = expiresAt
                         newSabotageEvent = SabotageEvent(
                             attackerPlayerId = piece.playerId,
@@ -386,16 +415,49 @@ class MultiTetrisEngine(
 
         if (topOutPlayerId != null) {
             val updatedActive = state.activePieces.toMutableMap().apply { remove(piece.playerId) }
-            val winnerId = if (state.mode == GameMode.VERSUS) {
-                state.config.spawnZones
-                    .filter { it.playerId != topOutPlayerId }
-                    .maxByOrNull { newPlayerScores[it.playerId] ?: 0 }
-                    ?.playerId
+            var winningTeam: TeamColor? = null
+            val winnerId: Int? = if (state.mode == GameMode.VERSUS) {
+                if (state.versusSubMode == VersusSubMode.TEAMS_2V2) {
+                    val losingTeam = state.playerTeams[topOutPlayerId] ?: TeamColor.NONE
+                    val resolvedTeam = when (losingTeam) {
+                        TeamColor.CYAN -> TeamColor.MAGENTA
+                        TeamColor.MAGENTA -> TeamColor.CYAN
+                        TeamColor.NONE -> {
+                            val cyanScore = newPlayerScores.entries.sumOf { (pid, s) ->
+                                if (state.playerTeams[pid] == TeamColor.CYAN) s else 0
+                            }
+                            val magentaScore = newPlayerScores.entries.sumOf { (pid, s) ->
+                                if (state.playerTeams[pid] == TeamColor.MAGENTA) s else 0
+                            }
+                            if (cyanScore >= magentaScore) TeamColor.CYAN else TeamColor.MAGENTA
+                        }
+                    }
+                    winningTeam = resolvedTeam
+                    state.config.spawnZones
+                        .filter { state.playerTeams[it.playerId] == resolvedTeam }
+                        .maxWithOrNull(
+                            compareBy<SpawnZone> { newPlayerScores[it.playerId] ?: 0 }
+                                .thenByDescending { it.playerId }
+                        )
+                        ?.playerId
+                } else {
+                    state.config.spawnZones
+                        .filter { it.playerId != topOutPlayerId }
+                        .maxWithOrNull(
+                            compareBy<SpawnZone> { newPlayerScores[it.playerId] ?: 0 }
+                                .thenByDescending { it.playerId }
+                        )
+                        ?.playerId
+                }
             } else {
                 null
             }
             val message = if (state.mode == GameMode.VERSUS && winnerId != null) {
-                "Player $topOutPlayerId spawn zone (${state.config.spawnZoneFor(topOutPlayerId).columnRange.first}-${state.config.spawnZoneFor(topOutPlayerId).columnRange.last}) overflowed! Player $winnerId wins!"
+                if (winningTeam != null) {
+                    "P$topOutPlayerId overflowed! ${winningTeam.label} wins!"
+                } else {
+                    "Player $topOutPlayerId spawn zone (${state.config.spawnZoneFor(topOutPlayerId).columnRange.first}-${state.config.spawnZoneFor(topOutPlayerId).columnRange.last}) overflowed! Player $winnerId wins!"
+                }
             } else {
                 "Spawn zone blocked! Co-op run ended at Level $newLevel."
             }
@@ -413,6 +475,7 @@ class MultiTetrisEngine(
                 lastSabotageEvent = newSabotageEvent,
                 isGameOver = true,
                 winnerPlayerId = winnerId,
+                winningTeam = winningTeam,
                 topOutPlayerId = topOutPlayerId,
                 statusMessage = message,
                 lastClearedRowIndices = nextClearedRows,

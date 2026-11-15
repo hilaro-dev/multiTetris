@@ -1,7 +1,10 @@
 package com.multitetris.economy
 
+import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import com.multitetris.ui.skin.SkinCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -119,5 +122,41 @@ class EconomyAndMissionsTest {
         assertEquals(1800, SkinCatalog.priceFor("cosmic_nebula"))
         assertEquals(2200, SkinCatalog.priceFor("dragon_inferno"))
         assertEquals(3000, SkinCatalog.priceFor("quantum_singularity"))
+    }
+
+    @Test
+    fun matchRewardCalculator_threeAndFourPlayerFfaAndTwoVTwoTeamsPayouts() {
+        val ffa3State = GameState(
+            config = BoardConfig.forPlayerCount(3),
+            mode = GameMode.VERSUS,
+            versusSubMode = VersusSubMode.FREE_FOR_ALL,
+            winnerPlayerId = 2,
+            playerLines = mapOf(1 to 1, 2 to 2, 3 to 0)
+        )
+        val ffaWinner = MatchRewardCalculator.calculate(ffa3State, localPlayerId = 2, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(85, ffaWinner.totalCoins) // 75 + 2*5
+
+        val ffaOther = MatchRewardCalculator.calculate(ffa3State, localPlayerId = 1, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(35, ffaOther.totalCoins) // 30 + 1*5
+
+        val twoVTwoState = GameState(
+            config = BoardConfig.forPlayerCount(4),
+            mode = GameMode.VERSUS,
+            versusSubMode = VersusSubMode.TEAMS_2V2,
+            playerTeams = mapOf(
+                1 to TeamColor.CYAN,
+                2 to TeamColor.CYAN,
+                3 to TeamColor.MAGENTA,
+                4 to TeamColor.MAGENTA
+            ),
+            winningTeam = TeamColor.CYAN,
+            winnerPlayerId = 1,
+            playerLines = mapOf(1 to 2, 2 to 1, 3 to 1, 4 to 0)
+        )
+        val teamWinP2 = MatchRewardCalculator.calculate(twoVTwoState, localPlayerId = 2, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(75, teamWinP2.totalCoins) // 70 + 1*5
+
+        val teamLoseP3 = MatchRewardCalculator.calculate(twoVTwoState, localPlayerId = 3, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(35, teamLoseP3.totalCoins) // 30 + 1*5
     }
 }

@@ -7,7 +7,9 @@ import com.multitetris.game.GameState
 import com.multitetris.game.LockedCell
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
+import com.multitetris.game.VersusSubMode
 import com.multitetris.network.webrtc.GameStatePacket
 import com.multitetris.network.webrtc.GridCellCodec
 import com.multitetris.network.webrtc.HandshakePacket
@@ -16,6 +18,7 @@ import com.multitetris.network.webrtc.NetPacketCodec
 import com.multitetris.network.webrtc.PendingIceCandidateQueue
 import com.multitetris.network.webrtc.PieceState
 import com.multitetris.network.webrtc.RematchRequestPacket
+import com.multitetris.ui.skin.SkinCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -111,24 +114,59 @@ class WebRtcPacketsAndQueueTest {
     }
 
     @Test
-    fun gridCellCodec_roundTripsAllSixStage4Skins() {
-        val allSkins = listOf(
-            "classic",
-            "neon_cyber",
-            "golden_flex",
-            "obsidian_magma",
-            "hologram_glitch",
-            "pixel_crystal"
-        )
+    fun gridCellCodec_roundTripsAllTwentyCatalogSkins() {
+        val allSkins = SkinCatalog.items.map { it.renderer.skinId }
+        assertEquals(20, allSkins.size)
         for ((index, skinId) in allSkins.withIndex()) {
             val cell = LockedCell(
-                playerId = (index % 3) + 1,
+                playerId = (index % 4) + 1,
                 tetrominoType = TetrominoType.entries[index % TetrominoType.entries.size],
                 skinId = skinId
             )
             val decoded = GridCellCodec.decode(GridCellCodec.encode(cell))
-            assertEquals(cell, decoded)
+            assertEquals("Round-trip failed for skin=$skinId", cell, decoded)
         }
+    }
+
+    @Test
+    fun gameStatePacket_preservesFourPlayersAndTeams2v2Metadata() {
+        val config = BoardConfig.forPlayerCount(4)
+        val teams = mapOf(
+            1 to TeamColor.CYAN,
+            2 to TeamColor.CYAN,
+            3 to TeamColor.MAGENTA,
+            4 to TeamColor.MAGENTA
+        )
+        val grid = MutableList(20) { MutableList<LockedCell?>(16) { null } }
+        grid[19][13] = LockedCell(playerId = 4, tetrominoType = TetrominoType.T, skinId = "quantum_singularity")
+
+        val hostState = GameState(
+            config = config,
+            mode = GameMode.VERSUS,
+            versusSubMode = VersusSubMode.TEAMS_2V2,
+            playerTeams = teams,
+            grid = grid.map { it.toList() },
+            activePieces = mapOf(
+                1 to ActivePiece(1, TetrominoType.O, 0, 1, 2, "classic"),
+                2 to ActivePiece(2, TetrominoType.O, 0, 5, 2, "neon_cyber"),
+                3 to ActivePiece(3, TetrominoType.O, 0, 9, 2, "dragon_inferno"),
+                4 to ActivePiece(4, TetrominoType.O, 0, 13, 2, "quantum_singularity")
+            ),
+            playerScores = mapOf(1 to 300, 2 to 200, 3 to 150, 4 to 100),
+            winningTeam = TeamColor.CYAN,
+            isGameOver = true,
+            winnerPlayerId = 1
+        )
+        val packet = GameStatePacket.fromGameState(tick = 40L, state = hostState, nowMillis = 20_000L)
+        val decoded = NetPacketCodec.decode(NetPacketCodec.encode(packet)) as GameStatePacket
+        val clientState = decoded.toClientGameState(MultiTetrisEngine(), localClockMillis = 20_000L)
+
+        assertEquals(4, clientState.config.playerCount)
+        assertEquals(16, clientState.config.width)
+        assertEquals(VersusSubMode.TEAMS_2V2, clientState.versusSubMode)
+        assertEquals(teams, clientState.playerTeams)
+        assertEquals(TeamColor.CYAN, clientState.winningTeam)
+        assertEquals(LockedCell(4, TetrominoType.T, "quantum_singularity"), clientState.grid[19][13])
     }
 
     @Test

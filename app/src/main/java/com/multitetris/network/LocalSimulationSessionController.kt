@@ -5,6 +5,8 @@ import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +43,9 @@ class LocalSimulationSessionController(
     override fun startSession(
         mode: GameMode,
         playerSkins: Map<Int, String>,
-        config: BoardConfig
+        config: BoardConfig,
+        versusSubMode: VersusSubMode,
+        playerTeams: Map<Int, TeamColor>
     ) {
         stop()
         val now = clockMillis()
@@ -54,7 +58,9 @@ class LocalSimulationSessionController(
                 mode = mode,
                 config = config,
                 playerSkins = playerSkins,
-                currentTimeMillis = now
+                currentTimeMillis = now,
+                versusSubMode = versusSubMode,
+                playerTeams = playerTeams
             )
         }
 

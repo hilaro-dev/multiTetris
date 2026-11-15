@@ -148,8 +148,8 @@ fun MultiTetrisApp(
                     onClearFriendFeedback = gameViewModel::clearFriendFeedback,
                     onCreateRoom = gameViewModel::createRoom,
                     onCancelPlayTogetherSearch = gameViewModel::cancelPlayTogetherSearch,
-                    onStartLocalTest = {
-                        gameViewModel.startLocal2PGame()
+                    onStartLocalTest = { playerCount, subMode ->
+                        gameViewModel.startLocalTestGame(playerCount, subMode)
                         navController.navigate(Routes.GAME)
                     }
                 )
@@ -173,7 +173,11 @@ fun MultiTetrisApp(
                         room = foundRoom,
                         signalState = signalState,
                         socialState = uiState.socialState,
+                        connectedPeerUids = uiState.connectedPeerUids,
                         onInviteFriend = gameViewModel::inviteFriendToRoom,
+                        onSetVersusSubMode = gameViewModel::setRoomVersusSubMode,
+                        onSwapPlayerTeam = gameViewModel::swapPlayerTeam,
+                        onStartMatch = gameViewModel::startRoomMatch,
                         onCancelLobby = {
                             gameViewModel.cancelPlayTogetherSearch()
                             navController.popBackStack(Routes.HOME, inclusive = false)

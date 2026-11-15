@@ -81,6 +81,17 @@ enum class GameMode(val label: String) {
     VERSUS("VERSUS")
 }
 
+enum class VersusSubMode(val label: String) {
+    FREE_FOR_ALL("Free-For-All"),
+    TEAMS_2V2("2v2 Teams")
+}
+
+enum class TeamColor(val label: String) {
+    NONE("Solo"),
+    CYAN("Team Cyan"),
+    MAGENTA("Team Magenta")
+}
+
 enum class PlayerAction {
     MOVE_LEFT,
     MOVE_RIGHT,
@@ -162,13 +173,18 @@ data class BoardConfig(
         }
 
         fun recommendedBoardWidth(playerCount: Int): Int {
-            return if (playerCount <= 2) 10 else playerCount * 4
+            return when {
+                playerCount <= 2 -> 10
+                playerCount == 3 -> 13
+                else -> 16
+            }
         }
 
         /**
          * Computes horizontal spawn columns dynamically:
          * - 2 players on width 10 -> [2, 6]
-         * - 3 players on width 12 -> [1, 5, 9]
+         * - 3 players on width 13 (or 12) -> [1, 5, 9]
+         * - 4 players on width 16 -> [1, 5, 9, 13]
          * - N players -> evenly spaced across zones of width (boardWidth / playerCount)
          */
         fun getSpawnColumns(playerCount: Int, boardWidth: Int): List<Int> {
@@ -177,6 +193,12 @@ data class BoardConfig(
 
             if (playerCount == 2 && boardWidth == 10) {
                 return listOf(2, 6)
+            }
+            if (playerCount == 3 && (boardWidth == 13 || boardWidth == 12)) {
+                return listOf(1, 5, 9)
+            }
+            if (playerCount == 4 && boardWidth == 16) {
+                return listOf(1, 5, 9, 13)
             }
 
             val zoneWidth = (boardWidth / playerCount).coerceAtLeast(1)
@@ -202,6 +224,21 @@ data class BoardConfig(
                 return listOf(
                     SpawnZone(playerId = 1, spawnX = cols[0], spawnY = 0, columnRange = 1..4),
                     SpawnZone(playerId = 2, spawnX = cols[1], spawnY = 0, columnRange = 5..8)
+                )
+            }
+            if (playerCount == 3 && (width == 13 || width == 12)) {
+                return listOf(
+                    SpawnZone(playerId = 1, spawnX = 1, spawnY = 0, columnRange = 0..3),
+                    SpawnZone(playerId = 2, spawnX = 5, spawnY = 0, columnRange = 4..7),
+                    SpawnZone(playerId = 3, spawnX = 9, spawnY = 0, columnRange = 8..(width - 1))
+                )
+            }
+            if (playerCount == 4 && width == 16) {
+                return listOf(
+                    SpawnZone(playerId = 1, spawnX = 1, spawnY = 0, columnRange = 0..3),
+                    SpawnZone(playerId = 2, spawnX = 5, spawnY = 0, columnRange = 4..7),
+                    SpawnZone(playerId = 3, spawnX = 9, spawnY = 0, columnRange = 8..11),
+                    SpawnZone(playerId = 4, spawnX = 13, spawnY = 0, columnRange = 12..15)
                 )
             }
 
@@ -235,11 +272,13 @@ data class SabotageEvent(
 data class GameState(
     val config: BoardConfig = BoardConfig(),
     val mode: GameMode = GameMode.CO_OP,
+    val versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
+    val playerTeams: Map<Int, TeamColor> = emptyMap(),
     val grid: List<List<LockedCell?>> = List(config.height) { List(config.width) { null } },
     val activePieces: Map<Int, ActivePiece> = emptyMap(),
     val ghostPieces: Map<Int, ActivePiece> = emptyMap(),
     val nextPieces: Map<Int, TetrominoType> = emptyMap(),
-    val playerSkins: Map<Int, String> = mapOf(1 to "classic", 2 to "neon_cyber"),
+    val playerSkins: Map<Int, String> = defaultPlayerSkins(config.playerCount),
     val sharedScore: Int = 0,
     val sharedLines: Int = 0,
     val level: Int = 1,
@@ -250,6 +289,7 @@ data class GameState(
     val isPaused: Boolean = false,
     val isGameOver: Boolean = false,
     val winnerPlayerId: Int? = null,
+    val winningTeam: TeamColor? = null,
     val topOutPlayerId: Int? = null,
     val statusMessage: String? = null,
     val lastClearedRowIndices: List<Int> = emptyList(),
@@ -258,5 +298,36 @@ data class GameState(
     fun isSabotaged(playerId: Int, currentTimeMillis: Long): Boolean {
         val until = sabotageBurstUntilMillis[playerId] ?: 0L
         return mode == GameMode.VERSUS && currentTimeMillis < until
+    }
+
+    fun teamScore(team: TeamColor): Int {
+        return playerScores.entries.sumOf { (pid, score) ->
+            if (playerTeams[pid] == team) score else 0
+        }
+    }
+
+    fun teamLines(team: TeamColor): Int {
+        return playerLines.entries.sumOf { (pid, lines) ->
+            if (playerTeams[pid] == team) lines else 0
+        }
+    }
+
+    companion object {
+        private val DEFAULT_PLAYER_SKINS = listOf(
+            "classic",
+            "neon_cyber",
+            "golden_flex",
+            "obsidian_magma"
+        )
+
+        fun defaultSkinForPlayer(playerId: Int): String {
+            return DEFAULT_PLAYER_SKINS[(playerId - 1).coerceAtLeast(0) % DEFAULT_PLAYER_SKINS.size]
+        }
+
+        fun defaultPlayerSkins(playerCount: Int): Map<Int, String> {
+            return (1..playerCount.coerceAtLeast(1)).associateWith { pid ->
+                defaultSkinForPlayer(pid)
+            }
+        }
     }
 }

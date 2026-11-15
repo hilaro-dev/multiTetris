@@ -4,6 +4,8 @@ import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.TeamColor
+import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -50,7 +52,9 @@ interface GameSessionController {
     fun startSession(
         mode: GameMode,
         playerSkins: Map<Int, String>,
-        config: BoardConfig = BoardConfig()
+        config: BoardConfig = BoardConfig(),
+        versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
+        playerTeams: Map<Int, TeamColor> = emptyMap()
     )
 
     fun dispatchAction(playerId: Int, action: PlayerAction)
