@@ -299,7 +299,12 @@ data class GameState(
     val feedToastEventId: Long = 0L,
     val statusMessage: String? = null,
     val lastClearedRowIndices: List<Int> = emptyList(),
-    val lineClearEventId: Long = 0L
+    val lineClearEventId: Long = 0L,
+    val sabotageEnabled: Boolean = false,
+    val equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
+    val usedSabotages: Map<Int, Set<SabotageType>> = emptyMap(),
+    val activeSabotages: Map<Int, ActiveSabotageState> = emptyMap(),
+    val systemGlitchWarningActive: Boolean = false
 ) {
     fun isPlayerEliminated(playerId: Int): Boolean = playerId in eliminatedPlayerIds
 
@@ -308,6 +313,31 @@ data class GameState(
     fun isPlayerDisconnected(playerId: Int): Boolean = playerId in disconnectedPlayerIds
 
     fun placementFor(playerId: Int): Int = playerPlacements[playerId] ?: 0
+
+    fun activeSabotageFor(playerId: Int): ActiveSabotageState? = activeSabotages[playerId]
+
+    fun equippedSabotagesFor(playerId: Int): List<SabotageType> =
+        equippedSabotages[playerId] ?: SabotageConfig.defaultLoadout
+
+    fun usedSabotagesFor(playerId: Int): Set<SabotageType> =
+        usedSabotages[playerId] ?: emptySet()
+
+    fun validSabotageTargetsFor(attackerPlayerId: Int): List<Int> {
+        if (!sabotageEnabled || mode != GameMode.VERSUS) return emptyList()
+        if (isPlayerEliminated(attackerPlayerId) || isPlayerDisconnected(attackerPlayerId)) {
+            return emptyList()
+        }
+        val myTeam = playerTeams[attackerPlayerId] ?: TeamColor.NONE
+        val isTeamsActive = versusSubMode == VersusSubMode.TEAMS_2V2 && myTeam != TeamColor.NONE
+        return config.spawnZones
+            .map { it.playerId }
+            .filter { targetId ->
+                targetId != attackerPlayerId &&
+                    !isPlayerEliminated(targetId) &&
+                    !isPlayerDisconnected(targetId) &&
+                    (!isTeamsActive || (playerTeams[targetId] ?: TeamColor.NONE) != myTeam)
+            }
+    }
 
     fun isSabotaged(playerId: Int, currentTimeMillis: Long): Boolean {
         val until = sabotageBurstUntilMillis[playerId] ?: 0L

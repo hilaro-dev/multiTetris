@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -31,6 +32,8 @@ import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -41,6 +44,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -56,6 +61,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.game.GameMode
+import com.multitetris.game.SabotageConfig
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
 import com.multitetris.game.VersusSubMode
@@ -87,6 +94,8 @@ fun MatchLobbyScreen(
     connectedPeerUids: Set<String> = emptySet(),
     onInviteFriend: (SavedFriend) -> Unit,
     onSetVersusSubMode: (VersusSubMode) -> Unit = {},
+    onSetSabotageEnabled: (Boolean) -> Unit = {},
+    onToggleSabotage: (SabotageType) -> Unit = {},
     onSwapPlayerTeam: (String) -> Unit = {},
     onStartMatch: () -> Unit = {},
     onCancelLobby: () -> Unit
@@ -98,6 +107,10 @@ fun MatchLobbyScreen(
     val occupiedUids = resolvedPlayers.map { it.uid }.toSet()
     val guestCount = (resolvedPlayers.size - 1).coerceAtLeast(0)
     val isTwoVTwoActive = room.mode == GameMode.VERSUS && room.versusSubMode == VersusSubMode.TEAMS_2V2
+    val showSabotageDraft = room.mode == GameMode.VERSUS && room.sabotageEnabled
+    val myUid = socialState.userProfile.uid
+    val mySelectedSabotages = resolvedPlayers.firstOrNull { it.uid == myUid }?.selectedSabotages
+        ?: SabotageConfig.defaultLoadout
 
     Box(
         modifier = Modifier
@@ -198,6 +211,7 @@ fun MatchLobbyScreen(
                         isHostViewing = isHost,
                         isPeerConnected = true,
                         showTeams = isTwoVTwoActive,
+                        showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[1]?.let { onSwapPlayerTeam(it.uid) } },
                         modifier = Modifier.weight(1f)
                     )
@@ -208,6 +222,7 @@ fun MatchLobbyScreen(
                         isHostViewing = isHost,
                         isPeerConnected = isSlotP2pReady(2, playerBySlot[2], room, connectedPeerUids),
                         showTeams = isTwoVTwoActive,
+                        showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[2]?.let { onSwapPlayerTeam(it.uid) } },
                         modifier = Modifier.weight(1f)
                     )
@@ -223,6 +238,7 @@ fun MatchLobbyScreen(
                         isHostViewing = isHost,
                         isPeerConnected = isSlotP2pReady(3, playerBySlot[3], room, connectedPeerUids),
                         showTeams = isTwoVTwoActive,
+                        showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[3]?.let { onSwapPlayerTeam(it.uid) } },
                         modifier = Modifier.weight(1f)
                     )
@@ -233,14 +249,15 @@ fun MatchLobbyScreen(
                         isHostViewing = isHost,
                         isPeerConnected = isSlotP2pReady(4, playerBySlot[4], room, connectedPeerUids),
                         showTeams = isTwoVTwoActive,
+                        showSabotages = showSabotageDraft,
                         onSwapTeam = { playerBySlot[4]?.let { onSwapPlayerTeam(it.uid) } },
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
 
-            // Host-only 2v2 Teams vs Free-For-All toggle when Versus mode has 4 players
-            if (room.mode == GameMode.VERSUS && resolvedPlayers.size == 4) {
+            // Host-only Teams vs Free-For-All toggle when Versus mode has 3-4 players
+            if (room.mode == GameMode.VERSUS && resolvedPlayers.size >= 3) {
                 Spacer(modifier = Modifier.height(10.dp))
                 if (isHost) {
                     Surface(
@@ -329,6 +346,24 @@ fun MatchLobbyScreen(
                         }
                     }
                 }
+            }
+
+            // Sabotage Mode Modifier Switch (visible to everyone, interactive for Host)
+            Spacer(modifier = Modifier.height(10.dp))
+            SabotageModeToggleCard(
+                sabotageEnabled = room.sabotageEnabled,
+                isHost = isHost,
+                isVersus = room.mode == GameMode.VERSUS,
+                onToggle = onSetSabotageEnabled
+            )
+
+            // Versus Loadout Drafting (Pick 2 Sabotages, visible to all when Sabotage Mode is ON)
+            if (showSabotageDraft) {
+                Spacer(modifier = Modifier.height(8.dp))
+                SabotageDraftChipBar(
+                    selectedSabotages = mySelectedSabotages,
+                    onToggleSabotage = onToggleSabotage
+                )
             }
 
             // Host Friend Invite List (available while fewer than 4 players in room)
@@ -547,6 +582,7 @@ private fun LobbySlotGridItem(
     isHostViewing: Boolean,
     isPeerConnected: Boolean,
     showTeams: Boolean,
+    showSabotages: Boolean = false,
     onSwapTeam: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -614,7 +650,7 @@ private fun LobbySlotGridItem(
 
     Card(
         modifier = modifier
-            .height(92.dp)
+            .height(if (showSabotages) 108.dp else 92.dp)
             .clip(RoundedCornerShape(14.dp))
             .then(
                 if (canSwap) Modifier.clickable(onClick = onSwapTeam) else Modifier
@@ -688,6 +724,42 @@ private fun LobbySlotGridItem(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
+                    if (showSabotages) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        val drafted = SabotageConfig.resolveLoadout(player.selectedSabotages)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            drafted.forEach { sab ->
+                                val sabColor = sabotageAccentColor(sab)
+                                Surface(
+                                    shape = RoundedCornerShape(5.dp),
+                                    color = sabColor.copy(alpha = 0.16f),
+                                    border = BorderStroke(0.7.dp, sabColor.copy(alpha = 0.75f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = sabotageIcon(sab),
+                                            contentDescription = sab.displayName,
+                                            tint = sabColor,
+                                            modifier = Modifier.size(10.dp)
+                                        )
+                                        Text(
+                                            text = sab.shortLabel,
+                                            color = sabColor,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.width(6.dp))
                 Canvas(modifier = Modifier.size(26.dp)) {
@@ -704,6 +776,172 @@ private fun LobbySlotGridItem(
             }
         }
     }
+}
+
+@Composable
+private fun SabotageModeToggleCard(
+    sabotageEnabled: Boolean,
+    isHost: Boolean,
+    isVersus: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = SlateSurface,
+        border = BorderStroke(
+            width = if (sabotageEnabled) 1.2.dp else 1.dp,
+            color = if (sabotageEnabled) ElectricGold.copy(alpha = 0.8f) else SubtleBorder
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Bolt,
+                    contentDescription = null,
+                    tint = if (sabotageEnabled) ElectricGold else TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column {
+                    Text(
+                        text = "Sabotage Mode",
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = when {
+                            !isVersus && sabotageEnabled -> "ON • Rogue AI triggers random System Glitches every 22s"
+                            !isVersus && isHost -> "OFF • Toggle to enable Co-op Rogue AI System Glitches"
+                            !isVersus -> "OFF • Host controls Co-op System Glitches"
+                            sabotageEnabled -> "ON • Players draft 2 Versus sabotages"
+                            isHost -> "OFF • Toggle to enable Versus sabotage drafting"
+                            else -> "OFF • Host controls match modifiers"
+                        },
+                        color = if (sabotageEnabled) ElectricGold else TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+            Switch(
+                checked = sabotageEnabled,
+                onCheckedChange = { if (isHost) onToggle(it) },
+                enabled = isHost,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = ObsidianBg,
+                    checkedTrackColor = ElectricGold,
+                    uncheckedThumbColor = TextSecondary,
+                    uncheckedTrackColor = ElevatedCard
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun SabotageDraftChipBar(
+    selectedSabotages: List<SabotageType>,
+    onToggleSabotage: (SabotageType) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = SlateSurface,
+        border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "PICK 2 SABOTAGES",
+                    color = ElectricGold,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = "${selectedSabotages.size}/${SabotageConfig.MAX_DRAFT_SLOTS} SELECTED",
+                    color = TextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                SabotageType.entries.forEach { sab ->
+                    val isSelected = sab in selectedSabotages
+                    val accent = sabotageAccentColor(sab)
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onToggleSabotage(sab) },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSelected) accent.copy(alpha = 0.22f) else ElevatedCard,
+                        border = BorderStroke(
+                            width = if (isSelected) 1.4.dp else 1.dp,
+                            color = if (isSelected) accent else SubtleBorder
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 6.dp, horizontal = 3.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Icon(
+                                imageVector = sabotageIcon(sab),
+                                contentDescription = sab.displayName,
+                                tint = if (isSelected) accent else TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = sab.shortLabel,
+                                color = if (isSelected) TextPrimary else TextSecondary,
+                                fontSize = 9.sp,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun sabotageIcon(type: SabotageType) = when (type) {
+    SabotageType.BLINDFOLD_FOG -> Icons.Rounded.VisibilityOff
+    SabotageType.CONTROLS_FLIP -> Icons.Rounded.SwapHoriz
+    SabotageType.BUTTON_FREEZE -> Icons.Rounded.AcUnit
+    SabotageType.TURBO_DROP -> Icons.Rounded.Bolt
+    SabotageType.DROP_JAMMER -> Icons.Rounded.WarningAmber
+}
+
+private fun sabotageAccentColor(type: SabotageType): Color = when (type) {
+    SabotageType.BLINDFOLD_FOG -> Color(0xFFB388FF)
+    SabotageType.CONTROLS_FLIP -> NeonMagenta
+    SabotageType.BUTTON_FREEZE -> CyberCyan
+    SabotageType.TURBO_DROP -> ElectricGold
+    SabotageType.DROP_JAMMER -> Color(0xFFFF6D5A)
 }
 
 @Composable

@@ -1,6 +1,8 @@
 package com.multitetris.network.social
 
 import com.multitetris.game.GameMode
+import com.multitetris.game.SabotageConfig
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.VersusSubMode
 import kotlinx.serialization.Serializable
@@ -112,7 +114,8 @@ data class RoomPlayerSlot(
     val skinId: String = "classic",
     val slotIndex: Int = 1,
     val team: TeamColor = TeamColor.NONE,
-    val ready: Boolean = true
+    val ready: Boolean = true,
+    val selectedSabotages: List<SabotageType> = SabotageConfig.defaultLoadout
 )
 
 data class MatchRoom(
@@ -129,7 +132,8 @@ data class MatchRoom(
     val myRole: MatchRole,
     val players: List<RoomPlayerSlot> = emptyList(),
     val versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
-    val mySlotIndex: Int = if (myRole == MatchRole.HOST) 1 else 2
+    val mySlotIndex: Int = if (myRole == MatchRole.HOST) 1 else 2,
+    val sabotageEnabled: Boolean = false
 ) {
     fun resolvedPlayers(): List<RoomPlayerSlot> {
         if (players.isNotEmpty()) {

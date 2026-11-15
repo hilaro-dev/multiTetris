@@ -45,13 +45,17 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VerticalAlignBottom
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -76,9 +80,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -90,9 +96,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.economy.MatchRewardBreakdown
+import com.multitetris.game.ActiveSabotageState
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
 import com.multitetris.game.VersusSubMode
@@ -110,6 +118,8 @@ import com.multitetris.ui.theme.SlateSurface
 import com.multitetris.ui.theme.SubtleBorder
 import com.multitetris.ui.theme.TextPrimary
 import com.multitetris.ui.theme.TextSecondary
+import kotlin.math.cos
+import kotlin.math.sin
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -127,6 +137,7 @@ fun GameScreen(
     onSwitchFocus: () -> Unit,
     onSelectFocusPlayer: (Int) -> Unit,
     onAction: (PlayerAction) -> Unit,
+    onUseSabotage: (Int, SabotageType) -> Unit = { _, _ -> },
     onTogglePause: () -> Unit,
     onRestart: () -> Unit,
     onExitToHome: () -> Unit
@@ -153,6 +164,63 @@ fun GameScreen(
         !gameState.isPlayerEliminated(controlledPlayerId) &&
         !gameState.isPlayerBlocked(controlledPlayerId)
 
+    val localActiveSabotage = gameState.activeSabotageFor(controlledPlayerId)
+    val isFrozenDebuff = localActiveSabotage?.type == SabotageType.BUTTON_FREEZE
+    val isFlippedDebuff = localActiveSabotage?.type == SabotageType.CONTROLS_FLIP
+    val isJammedDebuff = localActiveSabotage?.type == SabotageType.DROP_JAMMER
+    val equippedSabotages = gameState.equippedSabotagesFor(controlledPlayerId)
+    val usedSabotages = gameState.usedSabotagesFor(controlledPlayerId)
+    val validSabotageTargets = gameState.validSabotageTargetsFor(controlledPlayerId)
+    val showVersusSabotageDeck = gameState.sabotageEnabled &&
+        gameState.mode == GameMode.VERSUS &&
+        equippedSabotages.isNotEmpty() &&
+        !gameState.isPlayerEliminated(controlledPlayerId) &&
+        !gameState.isPlayerDisconnected(controlledPlayerId)
+
+    var pendingSabotage by remember { mutableStateOf<SabotageType?>(null) }
+    LaunchedEffect(
+        controlledPlayerId,
+        controlsEnabled,
+        validSabotageTargets,
+        usedSabotages,
+        showVersusSabotageDeck
+    ) {
+        if (!controlsEnabled ||
+            !showVersusSabotageDeck ||
+            validSabotageTargets.isEmpty() ||
+            pendingSabotage in usedSabotages
+        ) {
+            pendingSabotage = null
+        }
+    }
+
+    val handleTapSabotage: (SabotageType) -> Unit = { sabotageType ->
+        if (controlsEnabled && showVersusSabotageDeck && sabotageType !in usedSabotages) {
+            when {
+                validSabotageTargets.size == 1 -> {
+                    pendingSabotage = null
+                    onUseSabotage(validSabotageTargets.first(), sabotageType)
+                }
+                validSabotageTargets.size > 1 -> {
+                    pendingSabotage = if (pendingSabotage == sabotageType) null else sabotageType
+                }
+            }
+        }
+    }
+
+    val handlePlayerCardClick: (Int) -> Unit = { targetPlayerId ->
+        val pending = pendingSabotage
+        if (pending != null &&
+            controlsEnabled &&
+            targetPlayerId in validSabotageTargets
+        ) {
+            pendingSabotage = null
+            onUseSabotage(targetPlayerId, pending)
+        } else {
+            onSelectFocusPlayer(targetPlayerId)
+        }
+    }
+
     if (playerCount >= 3) {
         LandscapeGameLayout(
             gameState = gameState,
@@ -161,10 +229,20 @@ fun GameScreen(
             controlledPlayerId = controlledPlayerId,
             focusAccent = focusAccent,
             controlsEnabled = controlsEnabled,
+            showVersusSabotageDeck = showVersusSabotageDeck,
+            equippedSabotages = equippedSabotages,
+            usedSabotages = usedSabotages,
+            validSabotageTargets = validSabotageTargets,
+            pendingSabotage = pendingSabotage,
+            isFrozenDebuff = isFrozenDebuff,
+            isFlippedDebuff = isFlippedDebuff,
+            isJammedDebuff = isJammedDebuff,
             isMuted = isMuted,
             onToggleMute = onToggleMute,
             onSwitchFocus = onSwitchFocus,
-            onSelectFocusPlayer = onSelectFocusPlayer,
+            onSelectPlayerCard = handlePlayerCardClick,
+            onTapSabotage = handleTapSabotage,
+            onCancelSabotageTarget = { pendingSabotage = null },
             onAction = onAction,
             onTogglePause = onTogglePause,
             onRestart = onRestart,
@@ -199,7 +277,9 @@ fun GameScreen(
                 gameState = gameState,
                 networkState = networkState,
                 controlledPlayerId = controlledPlayerId,
-                onSelectPlayer = onSelectFocusPlayer
+                pendingSabotage = pendingSabotage,
+                validSabotageTargets = validSabotageTargets,
+                onSelectPlayer = handlePlayerCardClick
             )
 
             AnimatedVisibility(visible = networkState.activeSabotagedPlayerIds.isNotEmpty()) {
@@ -250,12 +330,36 @@ fun GameScreen(
                     .fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            if (showVersusSabotageDeck) {
+                Spacer(modifier = Modifier.height(6.dp))
+                SabotageHudDeck(
+                    equippedSabotages = equippedSabotages,
+                    usedSabotages = usedSabotages,
+                    pendingSabotage = pendingSabotage,
+                    validTargets = validSabotageTargets,
+                    targetLabels = validSabotageTargets.associateWith { id ->
+                        networkState.players.firstOrNull { it.playerId == id }
+                            ?.displayName
+                            ?.takeIf { it.isNotBlank() }
+                            ?: "P$id"
+                    },
+                    enabled = controlsEnabled,
+                    compact = false,
+                    onTapSabotage = handleTapSabotage,
+                    onPickTarget = handlePlayerCardClick,
+                    onCancelTarget = { pendingSabotage = null }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             TouchControlsDeck(
                 controlledPlayerId = controlledPlayerId,
                 focusAccent = focusAccent,
                 enabled = controlsEnabled,
+                isFrozen = isFrozenDebuff,
+                isFlipped = isFlippedDebuff,
+                isDropJammed = isJammedDebuff,
                 onAction = onAction
             )
         }
@@ -270,10 +374,20 @@ private fun LandscapeGameLayout(
     controlledPlayerId: Int,
     focusAccent: Color,
     controlsEnabled: Boolean,
+    showVersusSabotageDeck: Boolean,
+    equippedSabotages: List<SabotageType>,
+    usedSabotages: Set<SabotageType>,
+    validSabotageTargets: List<Int>,
+    pendingSabotage: SabotageType?,
+    isFrozenDebuff: Boolean,
+    isFlippedDebuff: Boolean,
+    isJammedDebuff: Boolean,
     isMuted: Boolean,
     onToggleMute: () -> Unit,
     onSwitchFocus: () -> Unit,
-    onSelectFocusPlayer: (Int) -> Unit,
+    onSelectPlayerCard: (Int) -> Unit,
+    onTapSabotage: (SabotageType) -> Unit,
+    onCancelSabotageTarget: () -> Unit,
     onAction: (PlayerAction) -> Unit,
     onTogglePause: () -> Unit,
     onRestart: () -> Unit,
@@ -322,7 +436,7 @@ private fun LandscapeGameLayout(
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                text = "2v2",
+                                text = if (playerCount == 4) "2v2" else "TEAMS",
                                 color = TextSecondary,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -370,38 +484,70 @@ private fun LandscapeGameLayout(
                     networkState = networkState,
                     playerId = 1,
                     isFocused = controlledPlayerId == 1,
-                    onClick = { onSelectFocusPlayer(1) }
+                    activeSabotage = gameState.activeSabotageFor(1),
+                    pendingSabotageType = pendingSabotage,
+                    isTargetable = pendingSabotage != null && 1 in validSabotageTargets,
+                    onClick = { onSelectPlayerCard(1) }
                 )
                 LandscapePlayerHudCard(
                     gameState = gameState,
                     networkState = networkState,
                     playerId = 3,
                     isFocused = controlledPlayerId == 3,
-                    onClick = { onSelectFocusPlayer(3) }
+                    activeSabotage = gameState.activeSabotageFor(3),
+                    pendingSabotageType = pendingSabotage,
+                    isTargetable = pendingSabotage != null && 3 in validSabotageTargets,
+                    onClick = { onSelectPlayerCard(3) }
                 )
             }
 
-            // Left-Thumb Directional Pad (LEFT + RIGHT)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ControlPadButton(
-                    modifier = Modifier.weight(1f),
-                    label = "LEFT",
-                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                    accent = focusAccent,
-                    enabled = controlsEnabled,
-                    onClick = { onAction(PlayerAction.MOVE_LEFT) }
-                )
-                ControlPadButton(
-                    modifier = Modifier.weight(1f),
-                    label = "RIGHT",
-                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    accent = focusAccent,
-                    enabled = controlsEnabled,
-                    onClick = { onAction(PlayerAction.MOVE_RIGHT) }
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (showVersusSabotageDeck) {
+                    SabotageHudDeck(
+                        equippedSabotages = equippedSabotages,
+                        usedSabotages = usedSabotages,
+                        pendingSabotage = pendingSabotage,
+                        validTargets = validSabotageTargets,
+                        targetLabels = validSabotageTargets.associateWith { id ->
+                            networkState.players.firstOrNull { it.playerId == id }
+                                ?.displayName
+                                ?.takeIf { it.isNotBlank() }
+                                ?: "P$id"
+                        },
+                        enabled = controlsEnabled,
+                        compact = true,
+                        onTapSabotage = onTapSabotage,
+                        onPickTarget = onSelectPlayerCard,
+                        onCancelTarget = onCancelSabotageTarget
+                    )
+                }
+
+                // Left-Thumb Directional Pad (LEFT + RIGHT)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ControlPadButton(
+                        modifier = Modifier.weight(1f),
+                        label = "LEFT",
+                        icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                        accent = focusAccent,
+                        enabled = controlsEnabled,
+                        isFrozen = isFrozenDebuff,
+                        isFlipped = isFlippedDebuff,
+                        onClick = { onAction(PlayerAction.MOVE_LEFT) }
+                    )
+                    ControlPadButton(
+                        modifier = Modifier.weight(1f),
+                        label = "RIGHT",
+                        icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        accent = focusAccent,
+                        enabled = controlsEnabled,
+                        isFrozen = isFrozenDebuff,
+                        isFlipped = isFlippedDebuff,
+                        onClick = { onAction(PlayerAction.MOVE_RIGHT) }
+                    )
+                }
             }
         }
 
@@ -452,7 +598,10 @@ private fun LandscapeGameLayout(
                     networkState = networkState,
                     playerId = 2,
                     isFocused = controlledPlayerId == 2,
-                    onClick = { onSelectFocusPlayer(2) }
+                    activeSabotage = gameState.activeSabotageFor(2),
+                    pendingSabotageType = pendingSabotage,
+                    isTargetable = pendingSabotage != null && 2 in validSabotageTargets,
+                    onClick = { onSelectPlayerCard(2) }
                 )
                 if (playerCount >= 4) {
                     LandscapePlayerHudCard(
@@ -460,7 +609,10 @@ private fun LandscapeGameLayout(
                         networkState = networkState,
                         playerId = 4,
                         isFocused = controlledPlayerId == 4,
-                        onClick = { onSelectFocusPlayer(4) }
+                        activeSabotage = gameState.activeSabotageFor(4),
+                        pendingSabotageType = pendingSabotage,
+                        isTargetable = pendingSabotage != null && 4 in validSabotageTargets,
+                        onClick = { onSelectPlayerCard(4) }
                     )
                 }
                 if (networkState.activeSabotagedPlayerIds.isNotEmpty()) {
@@ -486,11 +638,12 @@ private fun LandscapeGameLayout(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 ControlPadButton(
                     modifier = Modifier.fillMaxWidth(),
-                    label = "HARD DROP",
+                    label = if (isJammedDebuff) "JAMMED" else "HARD DROP",
                     icon = Icons.Rounded.VerticalAlignBottom,
                     accent = focusAccent,
                     highlighted = true,
-                    enabled = controlsEnabled,
+                    enabled = controlsEnabled && !isJammedDebuff,
+                    isFrozen = isFrozenDebuff,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onAction(PlayerAction.HARD_DROP)
@@ -506,6 +659,7 @@ private fun LandscapeGameLayout(
                         icon = Icons.Rounded.KeyboardArrowDown,
                         accent = focusAccent,
                         enabled = controlsEnabled,
+                        isFrozen = isFrozenDebuff,
                         onClick = { onAction(PlayerAction.SOFT_DROP) }
                     )
                     ControlPadButton(
@@ -514,6 +668,7 @@ private fun LandscapeGameLayout(
                         icon = Icons.AutoMirrored.Rounded.RotateRight,
                         accent = focusAccent,
                         enabled = controlsEnabled,
+                        isFrozen = isFrozenDebuff,
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onAction(PlayerAction.ROTATE_CW)
@@ -531,6 +686,9 @@ private fun LandscapePlayerHudCard(
     networkState: NetworkSessionState,
     playerId: Int,
     isFocused: Boolean,
+    activeSabotage: ActiveSabotageState? = null,
+    pendingSabotageType: SabotageType? = null,
+    isTargetable: Boolean = false,
     onClick: () -> Unit
 ) {
     val team = gameState.playerTeams[playerId] ?: TeamColor.NONE
@@ -542,6 +700,7 @@ private fun LandscapePlayerHudCard(
         showTeam && team == TeamColor.MAGENTA -> NeonMagenta
         else -> PlayerPalette.accentFor(playerId)
     }
+    val targetHighlightColor = pendingSabotageType?.let { sabotageAccentColor(it) } ?: NeonMagenta
     val endpoint = networkState.players.firstOrNull { it.playerId == playerId }
     val endpointName = endpoint?.displayName ?: "Player $playerId"
     val isSabotaged = playerId in networkState.activeSabotagedPlayerIds
@@ -562,14 +721,17 @@ private fun LandscapePlayerHudCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
         color = when {
+            isTargetable -> targetHighlightColor.copy(alpha = 0.22f)
             isEliminated -> SlateSurface.copy(alpha = 0.55f)
             isFocused -> accent.copy(alpha = 0.14f)
             else -> SlateSurface
         },
         border = BorderStroke(
-            width = if (isFocused || isSabotaged || isEliminated) 1.5.dp else 1.dp,
+            width = if (isTargetable || isFocused || isSabotaged || activeSabotage != null || isEliminated) 1.5.dp else 1.dp,
             color = when {
+                isTargetable -> targetHighlightColor
                 isEliminated -> NeonMagenta.copy(alpha = 0.6f)
+                activeSabotage != null -> sabotageAccentColor(activeSabotage.type)
                 isSabotaged -> ElectricGold
                 isFocused -> accent
                 else -> SubtleBorder
@@ -600,11 +762,17 @@ private fun LandscapePlayerHudCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
-                        modifier = if (isDisconnected) Modifier.alpha(0.5f) else Modifier
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .then(if (isDisconnected) Modifier.alpha(0.5f) else Modifier)
                     )
+                    if (activeSabotage != null) {
+                        ActiveSabotageStatusPill(activeSabotage = activeSabotage)
+                    }
                 }
                 Text(
                     text = when {
+                        isTargetable -> "TAP TO TARGET!"
                         isDisconnected -> "Disconnected"
                         isEliminated -> if (placement > 0) "OUT • #$placement" else "ELIMINATED"
                         isBlocked -> "WAIT CLEAR"
@@ -612,18 +780,21 @@ private fun LandscapePlayerHudCard(
                         else -> scoreText
                     },
                     color = when {
+                        isTargetable -> targetHighlightColor
                         isEliminated -> NeonMagenta
                         isBlocked -> ElectricGold
                         isSabotaged -> ElectricGold
                         else -> TextSecondary
                     },
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = if (isTargetable) FontWeight.ExtraBold else FontWeight.SemiBold,
                     maxLines = 1
                 )
             }
             if (isDisconnected) {
                 LeftBadgePill()
+            } else if (activeSabotage?.type == SabotageType.DROP_JAMMER) {
+                JammedNextPieceBox(modifier = Modifier.size(28.dp))
             } else {
                 NextPiecePreviewCanvas(
                     tetrominoType = gameState.nextPieces[playerId],
@@ -739,6 +910,29 @@ private fun BoardWithOverlays(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 0.6.sp,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = gameState.sabotageEnabled &&
+                        gameState.mode == GameMode.CO_OP &&
+                        gameState.systemGlitchWarningActive,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(0xFF2B0B1E).copy(alpha = 0.94f),
+                        border = BorderStroke(1.4.dp, NeonMagenta)
+                    ) {
+                        Text(
+                            text = "⚠️ SYSTEM GLITCH INCOMING...",
+                            color = NeonMagenta,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.6.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -921,6 +1115,8 @@ private fun DualPlayerHud(
     gameState: GameState,
     networkState: NetworkSessionState,
     controlledPlayerId: Int,
+    pendingSabotage: SabotageType? = null,
+    validSabotageTargets: List<Int> = emptyList(),
     onSelectPlayer: (Int) -> Unit
 ) {
     Row(
@@ -938,6 +1134,9 @@ private fun DualPlayerHud(
             isFocused = controlledPlayerId == 1,
             isPausedByPiece = gameState.activePieces[1]?.isPausedByPiece == true,
             isSabotaged = 1 in networkState.activeSabotagedPlayerIds,
+            activeSabotage = gameState.activeSabotageFor(1),
+            pendingSabotageType = pendingSabotage,
+            isTargetable = pendingSabotage != null && 1 in validSabotageTargets,
             isEliminated = gameState.isPlayerEliminated(1),
             isBlocked = gameState.isPlayerBlocked(1),
             isDisconnected = (networkState.players.firstOrNull { it.playerId == 1 }?.isDisconnected == true) ||
@@ -995,6 +1194,9 @@ private fun DualPlayerHud(
             isFocused = controlledPlayerId == 2,
             isPausedByPiece = gameState.activePieces[2]?.isPausedByPiece == true,
             isSabotaged = 2 in networkState.activeSabotagedPlayerIds,
+            activeSabotage = gameState.activeSabotageFor(2),
+            pendingSabotageType = pendingSabotage,
+            isTargetable = pendingSabotage != null && 2 in validSabotageTargets,
             isEliminated = gameState.isPlayerEliminated(2),
             isBlocked = gameState.isPlayerBlocked(2),
             isDisconnected = (networkState.players.firstOrNull { it.playerId == 2 }?.isDisconnected == true) ||
@@ -1017,6 +1219,9 @@ private fun PlayerPreviewCard(
     isFocused: Boolean,
     isPausedByPiece: Boolean,
     isSabotaged: Boolean,
+    activeSabotage: ActiveSabotageState? = null,
+    pendingSabotageType: SabotageType? = null,
+    isTargetable: Boolean = false,
     isEliminated: Boolean = false,
     isBlocked: Boolean = false,
     isDisconnected: Boolean = false,
@@ -1026,8 +1231,11 @@ private fun PlayerPreviewCard(
 ) {
     val accent = PlayerPalette.accentFor(playerId)
     val effectiveEliminated = isEliminated || isDisconnected
+    val targetHighlightColor = pendingSabotageType?.let { sabotageAccentColor(it) } ?: NeonMagenta
     val borderColor = when {
+        isTargetable -> targetHighlightColor
         effectiveEliminated -> NeonMagenta
+        activeSabotage != null -> sabotageAccentColor(activeSabotage.type)
         isBlocked -> ElectricGold
         isSabotaged -> ElectricGold
         isFocused -> accent
@@ -1039,8 +1247,15 @@ private fun PlayerPreviewCard(
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        color = if (isFocused && !isDisconnected) accent.copy(alpha = 0.1f) else SlateSurface,
-        border = BorderStroke(if (isFocused || isSabotaged || effectiveEliminated) 1.5.dp else 1.dp, borderColor)
+        color = when {
+            isTargetable -> targetHighlightColor.copy(alpha = 0.22f)
+            isFocused && !isDisconnected -> accent.copy(alpha = 0.1f)
+            else -> SlateSurface
+        },
+        border = BorderStroke(
+            if (isTargetable || isFocused || isSabotaged || activeSabotage != null || effectiveEliminated) 1.5.dp else 1.dp,
+            borderColor
+        )
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1060,9 +1275,13 @@ private fun PlayerPreviewCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
-                        modifier = if (isDisconnected) Modifier.alpha(0.5f) else Modifier
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .then(if (isDisconnected) Modifier.alpha(0.5f) else Modifier)
                     )
-                    if (isFocused && !isDisconnected) {
+                    if (activeSabotage != null) {
+                        ActiveSabotageStatusPill(activeSabotage = activeSabotage)
+                    } else if (isFocused && !isDisconnected) {
                         Text(
                             text = "ACTIVE",
                             color = accent,
@@ -1073,6 +1292,7 @@ private fun PlayerPreviewCard(
                 }
                 Text(
                     text = when {
+                        isTargetable -> "TAP TO TARGET!"
                         isDisconnected -> "Disconnected"
                         effectiveEliminated -> if (placement > 0) "OUT • #$placement" else "ELIMINATED"
                         isBlocked -> "WAIT CLEAR"
@@ -1082,6 +1302,7 @@ private fun PlayerPreviewCard(
                         else -> spawnColLabel
                     },
                     color = when {
+                        isTargetable -> targetHighlightColor
                         effectiveEliminated -> NeonMagenta
                         isBlocked -> ElectricGold
                         isSabotaged -> ElectricGold
@@ -1089,13 +1310,15 @@ private fun PlayerPreviewCard(
                         else -> TextSecondary
                     },
                     fontSize = 10.sp,
-                    fontWeight = if (isSabotaged || isPausedByPiece || effectiveEliminated || isBlocked) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (isTargetable || isSabotaged || isPausedByPiece || effectiveEliminated || isBlocked) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1
                 )
             }
 
             if (isDisconnected) {
                 LeftBadgePill()
+            } else if (activeSabotage?.type == SabotageType.DROP_JAMMER) {
+                JammedNextPieceBox(modifier = Modifier.size(36.dp))
             } else {
                 NextPiecePreviewCanvas(
                     tetrominoType = nextType,
@@ -1301,6 +1524,56 @@ fun TetrisBoardCanvas(
             }
         }
 
+        // 2b. Blindfold fog debuff: animated dark swirling fog over bottom 10 rows
+        if (gameState.activeSabotageFor(controlledPlayerId)?.type == SabotageType.BLINDFOLD_FOG) {
+            val fogStartRow = (rows - 10).coerceAtLeast(0)
+            val fogTop = fogStartRow * cellH
+            val fogHeight = (size.height - fogTop).coerceAtLeast(0f)
+            val phaseRad = ((animTimeMillis % 4000L) / 4000f) * (2f * Math.PI.toFloat())
+            clipRect(left = 0f, top = fogTop, right = size.width, bottom = size.height) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xEE050812),
+                            Color(0xFF04060E),
+                            Color(0xFF070B18)
+                        ),
+                        startY = fogTop,
+                        endY = size.height
+                    ),
+                    topLeft = Offset(0f, fogTop),
+                    size = Size(size.width, fogHeight)
+                )
+                for (band in 0 until 5) {
+                    val bandY = fogTop + fogHeight * ((band + 0.5f) / 5f)
+                    val driftX = sin(phaseRad + band * 1.3f) * size.width * 0.16f
+                    val driftY = cos(phaseRad * 1.5f + band * 0.9f) * cellH * 0.45f
+                    val plumeCenter = Offset(size.width * 0.5f + driftX, bandY + driftY)
+                    val radius = (size.width * 0.42f).coerceAtLeast(1f)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color(0x5538BDF8),
+                                Color(0x2864748B),
+                                Color.Transparent
+                            ),
+                            center = plumeCenter,
+                            radius = radius
+                        ),
+                        radius = radius,
+                        center = plumeCenter
+                    )
+                }
+            }
+            drawLine(
+                color = Color(0xFF64748B).copy(alpha = 0.75f),
+                start = Offset(0f, fogTop),
+                end = Offset(size.width, fogTop),
+                strokeWidth = 2f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), phaseRad * 12f)
+            )
+        }
+
         // 3. Draw active falling pieces for all players
         for (piece in gameState.activePieces.values) {
             val renderer = SkinRegistry.resolve(piece.skinId)
@@ -1394,6 +1667,9 @@ private fun TouchControlsDeck(
     controlledPlayerId: Int,
     focusAccent: Color,
     enabled: Boolean,
+    isFrozen: Boolean = false,
+    isFlipped: Boolean = false,
+    isDropJammed: Boolean = false,
     onAction: (PlayerAction) -> Unit
 ) {
     val haptics = LocalHapticFeedback.current
@@ -1408,6 +1684,8 @@ private fun TouchControlsDeck(
             icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
             accent = focusAccent,
             enabled = enabled,
+            isFrozen = isFrozen,
+            isFlipped = isFlipped,
             onClick = { onAction(PlayerAction.MOVE_LEFT) }
         )
         ControlPadButton(
@@ -1416,6 +1694,7 @@ private fun TouchControlsDeck(
             icon = Icons.Rounded.KeyboardArrowDown,
             accent = focusAccent,
             enabled = enabled,
+            isFrozen = isFrozen,
             onClick = { onAction(PlayerAction.SOFT_DROP) }
         )
         ControlPadButton(
@@ -1424,6 +1703,8 @@ private fun TouchControlsDeck(
             icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             accent = focusAccent,
             enabled = enabled,
+            isFrozen = isFrozen,
+            isFlipped = isFlipped,
             onClick = { onAction(PlayerAction.MOVE_RIGHT) }
         )
         ControlPadButton(
@@ -1432,6 +1713,7 @@ private fun TouchControlsDeck(
             icon = Icons.AutoMirrored.Rounded.RotateRight,
             accent = focusAccent,
             enabled = enabled,
+            isFrozen = isFrozen,
             onClick = {
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onAction(PlayerAction.ROTATE_CW)
@@ -1439,11 +1721,12 @@ private fun TouchControlsDeck(
         )
         ControlPadButton(
             modifier = Modifier.weight(1.05f),
-            label = "DROP",
+            label = if (isDropJammed) "JAMMED" else "DROP",
             icon = Icons.Rounded.VerticalAlignBottom,
             accent = focusAccent,
             highlighted = true,
-            enabled = enabled,
+            enabled = enabled && !isDropJammed,
+            isFrozen = isFrozen,
             onClick = {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onAction(PlayerAction.HARD_DROP)
@@ -1460,40 +1743,319 @@ private fun ControlPadButton(
     accent: Color,
     highlighted: Boolean = false,
     enabled: Boolean,
+    isFrozen: Boolean = false,
+    isFlipped: Boolean = false,
     onClick: () -> Unit
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.height(64.dp),
-        shape = RoundedCornerShape(14.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (highlighted) accent.copy(alpha = 0.24f) else ElevatedCard,
-            contentColor = TextPrimary,
-            disabledContainerColor = SlateSurface,
-            disabledContentColor = TextSecondary.copy(alpha = 0.4f)
-        ),
-        border = BorderStroke(1.2.dp, if (enabled) accent.copy(alpha = if (highlighted) 0.9f else 0.45f) else SubtleBorder)
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+    val effectiveEnabled = enabled && !isFrozen
+    val flipPurple = Color(0xFFA855F7)
+    val iceCyan = Color(0xFF7DD3FC)
+    val effectiveAccent = when {
+        isFrozen -> iceCyan
+        isFlipped -> flipPurple
+        else -> accent
+    }
+    val containerColor = when {
+        isFrozen -> Color(0xFF0D283D)
+        isFlipped && effectiveEnabled -> flipPurple.copy(alpha = 0.24f)
+        highlighted -> effectiveAccent.copy(alpha = 0.24f)
+        else -> ElevatedCard
+    }
+    val borderColor = when {
+        isFrozen -> iceCyan.copy(alpha = 0.85f)
+        isFlipped && effectiveEnabled -> flipPurple
+        effectiveEnabled -> effectiveAccent.copy(alpha = if (highlighted) 0.9f else 0.45f)
+        else -> SubtleBorder
+    }
+
+    Box(modifier = modifier) {
+        Button(
+            onClick = onClick,
+            enabled = effectiveEnabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = containerColor,
+                contentColor = TextPrimary,
+                disabledContainerColor = if (isFrozen) Color(0xFF0D283D) else SlateSurface,
+                disabledContentColor = if (isFrozen) iceCyan.copy(alpha = 0.7f) else TextSecondary.copy(alpha = 0.4f)
+            ),
+            border = BorderStroke(if (isFrozen || isFlipped) 1.4.dp else 1.2.dp, borderColor)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = if (enabled) accent else TextSecondary.copy(alpha = 0.4f),
-                modifier = Modifier.size(24.dp)
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = when {
+                        isFrozen -> iceCyan.copy(alpha = 0.8f)
+                        effectiveEnabled -> effectiveAccent
+                        else -> TextSecondary.copy(alpha = 0.4f)
+                    },
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = label,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.4.sp
+                )
+            }
+        }
+
+        if (isFrozen) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                iceCyan.copy(alpha = 0.22f),
+                                Color(0xFF38BDF8).copy(alpha = 0.08f)
+                            )
+                        )
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AcUnit,
+                    contentDescription = "Frozen",
+                    tint = Color.White.copy(alpha = 0.9f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 5.dp)
+                        .size(13.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SabotageHudDeck(
+    equippedSabotages: List<SabotageType>,
+    usedSabotages: Set<SabotageType>,
+    pendingSabotage: SabotageType?,
+    validTargets: List<Int>,
+    targetLabels: Map<Int, String>,
+    enabled: Boolean,
+    compact: Boolean,
+    onTapSabotage: (SabotageType) -> Unit,
+    onPickTarget: (Int) -> Unit,
+    onCancelTarget: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        if (pendingSabotage != null && validTargets.size > 1) {
+            val pendingColor = sabotageAccentColor(pendingSabotage)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = pendingColor.copy(alpha = 0.16f),
+                border = BorderStroke(1.2.dp, pendingColor)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = if (compact) "HIT:" else "PICK TARGET:",
+                        color = pendingColor,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    validTargets.forEach { targetId ->
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(7.dp))
+                                .clickable(enabled = enabled) { onPickTarget(targetId) },
+                            shape = RoundedCornerShape(7.dp),
+                            color = SlateSurface,
+                            border = BorderStroke(1.dp, pendingColor.copy(alpha = 0.85f))
+                        ) {
+                            Text(
+                                text = targetLabels[targetId] ?: "P$targetId",
+                                color = TextPrimary,
+                                fontSize = if (compact) 9.sp else 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onCancelTarget,
+                        modifier = Modifier.size(22.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Cancel target",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            equippedSabotages.forEach { sabotageType ->
+                val isUsed = sabotageType in usedSabotages
+                val isPending = pendingSabotage == sabotageType
+                val abilityColor = sabotageAccentColor(sabotageType)
+                val isClickable = enabled && !isUsed && validTargets.isNotEmpty()
+                val cardShape = RoundedCornerShape(10.dp)
+
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(cardShape)
+                        .clickable(enabled = isClickable) { onTapSabotage(sabotageType) },
+                    shape = cardShape,
+                    color = when {
+                        isUsed -> SlateSurface.copy(alpha = 0.45f)
+                        isPending -> abilityColor.copy(alpha = 0.28f)
+                        isClickable -> abilityColor.copy(alpha = 0.14f)
+                        else -> SlateSurface
+                    },
+                    border = BorderStroke(
+                        width = if (isPending) 1.5.dp else 1.dp,
+                        color = when {
+                            isPending -> abilityColor
+                            isClickable -> abilityColor.copy(alpha = 0.7f)
+                            else -> SubtleBorder
+                        }
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = if (compact) 6.dp else 10.dp,
+                            vertical = if (compact) 6.dp else 7.dp
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = sabotageIcon(sabotageType),
+                            contentDescription = sabotageType.displayName,
+                            tint = if (isUsed || !isClickable) {
+                                TextSecondary.copy(alpha = 0.45f)
+                            } else {
+                                abilityColor
+                            },
+                            modifier = Modifier.size(if (compact) 15.dp else 18.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (compact) sabotageType.shortLabel else sabotageType.displayName,
+                                color = if (isUsed) TextSecondary else TextPrimary,
+                                fontSize = if (compact) 10.sp else 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = when {
+                                    isUsed -> "USED"
+                                    isPending -> "PICK TARGET"
+                                    validTargets.size == 1 -> "TAP TO FIRE"
+                                    validTargets.size > 1 -> "TAP -> TARGET"
+                                    else -> "READY"
+                                },
+                                color = when {
+                                    isUsed -> TextSecondary.copy(alpha = 0.65f)
+                                    isPending -> abilityColor
+                                    else -> abilityColor.copy(alpha = 0.9f)
+                                },
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveSabotageStatusPill(
+    activeSabotage: ActiveSabotageState
+) {
+    val pillColor = sabotageAccentColor(activeSabotage.type)
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = pillColor.copy(alpha = 0.22f),
+        border = BorderStroke(1.dp, pillColor)
+    ) {
+        Text(
+            text = "${activeSabotage.type.statusBadgeLabel} ${activeSabotage.remainingSeconds}s",
+            color = pillColor,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+        )
+    }
+}
+
+@Composable
+private fun JammedNextPieceBox(
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = NeonMagenta.copy(alpha = 0.16f),
+        border = BorderStroke(1.dp, NeonMagenta.copy(alpha = 0.85f))
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = label,
+                text = "???",
+                color = NeonMagenta,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 0.4.sp
+                maxLines = 1
             )
         }
     }
+}
+
+private fun sabotageIcon(type: SabotageType): ImageVector = when (type) {
+    SabotageType.BLINDFOLD_FOG -> Icons.Rounded.VisibilityOff
+    SabotageType.CONTROLS_FLIP -> Icons.Rounded.SwapHoriz
+    SabotageType.BUTTON_FREEZE -> Icons.Rounded.AcUnit
+    SabotageType.TURBO_DROP -> Icons.Rounded.Bolt
+    SabotageType.DROP_JAMMER -> Icons.Rounded.WarningAmber
+}
+
+private fun sabotageAccentColor(type: SabotageType): Color = when (type) {
+    SabotageType.BLINDFOLD_FOG -> Color(0xFF94A3B8)
+    SabotageType.CONTROLS_FLIP -> Color(0xFFA855F7)
+    SabotageType.BUTTON_FREEZE -> Color(0xFF38BDF8)
+    SabotageType.TURBO_DROP -> ElectricGold
+    SabotageType.DROP_JAMMER -> NeonMagenta
 }
 
 @Composable

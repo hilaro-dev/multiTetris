@@ -23,6 +23,7 @@ class MultiTetrisEngine(
     private val pieceBagOverride: ((playerId: Int) -> TetrominoType)? = null
 ) {
     private val playerBags = mutableMapOf<Int, MutableList<TetrominoType>>()
+    private var coopGlitchElapsedMs: Long = 0L
 
     var state: GameState = GameState()
         private set
@@ -33,9 +34,12 @@ class MultiTetrisEngine(
         playerSkins: Map<Int, String> = GameState.defaultPlayerSkins(config.playerCount),
         currentTimeMillis: Long = 0L,
         versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
-        playerTeams: Map<Int, TeamColor> = emptyMap()
+        playerTeams: Map<Int, TeamColor> = emptyMap(),
+        sabotageEnabled: Boolean = false,
+        equippedSabotages: Map<Int, List<SabotageType>> = emptyMap()
     ): GameState {
         playerBags.clear()
+        coopGlitchElapsedMs = 0L
         val emptyGrid = List(config.height) { List<LockedCell?>(config.width) { null } }
         val activePieces = mutableMapOf<Int, ActivePiece>()
         val nextPieces = mutableMapOf<Int, TetrominoType>()
@@ -78,6 +82,13 @@ class MultiTetrisEngine(
             lines[playerId] = 0
         }
 
+        val resolvedEquipped = config.spawnZones.associate { zone ->
+            zone.playerId to SabotageConfig.resolveLoadout(
+                equippedSabotages[zone.playerId] ?: SabotageConfig.defaultLoadout
+            )
+        }
+        val initialUsed = config.spawnZones.associate { it.playerId to emptySet<SabotageType>() }
+
         val initialState = GameState(
             config = config,
             mode = mode,
@@ -99,7 +110,12 @@ class MultiTetrisEngine(
             winnerPlayerId = null,
             winningTeam = null,
             topOutPlayerId = null,
-            statusMessage = null
+            statusMessage = null,
+            sabotageEnabled = sabotageEnabled,
+            equippedSabotages = resolvedEquipped,
+            usedSabotages = initialUsed,
+            activeSabotages = emptyMap(),
+            systemGlitchWarningActive = false
         )
 
         state = refreshPauseFlagsAndGhosts(initialState)
@@ -136,10 +152,12 @@ class MultiTetrisEngine(
 
     fun getDropIntervalMs(playerId: Int, currentTimeMillis: Long): Long {
         val baseInterval = max(MIN_DROP_INTERVAL_MS, BASE_DROP_INTERVAL_MS - (state.level - 1) * LEVEL_SPEED_STEP_MS)
-        return if (state.isSabotaged(playerId, currentTimeMillis)) {
-            SABOTAGE_DROP_INTERVAL_MS
-        } else {
-            baseInterval
+        return when {
+            state.activeSabotageFor(playerId)?.type == SabotageType.TURBO_DROP ->
+                (baseInterval / 3L).coerceAtLeast(40L)
+            !state.sabotageEnabled && state.isSabotaged(playerId, currentTimeMillis) ->
+                SABOTAGE_DROP_INTERVAL_MS
+            else -> baseInterval
         }
     }
 
@@ -150,6 +168,9 @@ class MultiTetrisEngine(
     ): GameState {
         if (state.isPaused || state.isGameOver) return state
         val piece = state.activePieces[playerId] ?: return state
+        val activeType = state.activeSabotageFor(playerId)?.type
+        if (activeType == SabotageType.BUTTON_FREEZE) return state
+        if (activeType == SabotageType.DROP_JAMMER && action == PlayerAction.HARD_DROP) return state
 
         return when (action) {
             PlayerAction.MOVE_LEFT -> tryMoveHorizontal(piece, dx = -1)
@@ -523,9 +544,11 @@ class MultiTetrisEngine(
         }
 
         if (newlyEliminated.isNotEmpty()) {
+            val updatedSabotages = state.activeSabotages.toMutableMap()
             for (elimId in newlyEliminated) {
                 newEliminatedIds.add(elimId)
                 updatedActive.remove(elimId)
+                updatedSabotages.remove(elimId)
                 val aliveAfter = state.config.spawnZones.count { it.playerId !in newEliminatedIds }
                 newPlacements[elimId] = aliveAfter + 1
                 feedToast = "P$elimId was eliminated!"
@@ -576,6 +599,8 @@ class MultiTetrisEngine(
                         playerLines = newPlayerLines,
                         sabotageBurstUntilMillis = newSabotageUntil,
                         lastSabotageEvent = newSabotageEvent,
+                        activeSabotages = emptyMap(),
+                        systemGlitchWarningActive = false,
                         eliminatedPlayerIds = newEliminatedIds,
                         playerPlacements = newPlacements,
                         feedToastMessage = feedToast,
@@ -615,6 +640,8 @@ class MultiTetrisEngine(
                     playerLines = newPlayerLines,
                     sabotageBurstUntilMillis = newSabotageUntil,
                     lastSabotageEvent = newSabotageEvent,
+                    activeSabotages = emptyMap(),
+                    systemGlitchWarningActive = false,
                     eliminatedPlayerIds = newEliminatedIds,
                     playerPlacements = newPlacements,
                     feedToastMessage = feedToast,
@@ -646,6 +673,7 @@ class MultiTetrisEngine(
                 playerLines = newPlayerLines,
                 sabotageBurstUntilMillis = newSabotageUntil,
                 lastSabotageEvent = newSabotageEvent,
+                activeSabotages = updatedSabotages,
                 eliminatedPlayerIds = newEliminatedIds,
                 playerPlacements = newPlacements,
                 feedToastMessage = feedToast,
@@ -698,6 +726,7 @@ class MultiTetrisEngine(
         }
         val updatedActive = state.activePieces.toMutableMap().apply { remove(playerId) }
         val updatedGhosts = state.ghostPieces.toMutableMap().apply { remove(playerId) }
+        val updatedSabotages = state.activeSabotages.toMutableMap().apply { remove(playerId) }
         val label = displayName?.takeIf { it.isNotBlank() } ?: "P$playerId"
         val feedToast = "$label left the match"
         val nextFeedEventId = state.feedToastEventId + 1L
@@ -708,6 +737,8 @@ class MultiTetrisEngine(
                 state.copy(
                     activePieces = emptyMap(),
                     ghostPieces = emptyMap(),
+                    activeSabotages = emptyMap(),
+                    systemGlitchWarningActive = false,
                     blockedPlayerIds = newBlockedIds,
                     eliminatedPlayerIds = newEliminatedIds,
                     disconnectedPlayerIds = newDisconnectedIds,
@@ -724,6 +755,7 @@ class MultiTetrisEngine(
                     state.copy(
                         activePieces = updatedActive,
                         ghostPieces = updatedGhosts,
+                        activeSabotages = updatedSabotages,
                         blockedPlayerIds = newBlockedIds,
                         eliminatedPlayerIds = newEliminatedIds,
                         disconnectedPlayerIds = newDisconnectedIds,
@@ -767,6 +799,8 @@ class MultiTetrisEngine(
                 state = state.copy(
                     activePieces = emptyMap(),
                     ghostPieces = emptyMap(),
+                    activeSabotages = emptyMap(),
+                    systemGlitchWarningActive = false,
                     eliminatedPlayerIds = newEliminatedIds,
                     disconnectedPlayerIds = newDisconnectedIds,
                     playerPlacements = newPlacements,
@@ -789,6 +823,8 @@ class MultiTetrisEngine(
             state = state.copy(
                 activePieces = emptyMap(),
                 ghostPieces = emptyMap(),
+                activeSabotages = emptyMap(),
+                systemGlitchWarningActive = false,
                 eliminatedPlayerIds = newEliminatedIds,
                 disconnectedPlayerIds = newDisconnectedIds,
                 playerPlacements = newPlacements,
@@ -811,12 +847,118 @@ class MultiTetrisEngine(
             state.copy(
                 activePieces = updatedActive,
                 ghostPieces = updatedGhosts,
+                activeSabotages = updatedSabotages,
                 eliminatedPlayerIds = newEliminatedIds,
                 disconnectedPlayerIds = newDisconnectedIds,
                 playerPlacements = newPlacements,
                 feedToastMessage = feedToast,
                 feedToastEventId = nextFeedEventId
             )
+        )
+        return state
+    }
+
+    /**
+     * Validates and applies a drafted Versus sabotage from [attackerPlayerId] to [targetPlayerId].
+     */
+    fun useSabotage(
+        attackerPlayerId: Int,
+        targetPlayerId: Int,
+        sabotageType: SabotageType,
+        attackerLabel: String? = null
+    ): GameState {
+        if (state.isPaused || state.isGameOver || !state.sabotageEnabled || state.mode != GameMode.VERSUS) {
+            return state
+        }
+        if (state.isPlayerEliminated(attackerPlayerId) || state.isPlayerDisconnected(attackerPlayerId)) {
+            return state
+        }
+        if (sabotageType !in state.equippedSabotagesFor(attackerPlayerId)) {
+            return state
+        }
+        if (sabotageType in state.usedSabotagesFor(attackerPlayerId)) {
+            return state
+        }
+        if (targetPlayerId !in state.validSabotageTargetsFor(attackerPlayerId)) {
+            return state
+        }
+
+        val updatedUsed = state.usedSabotages.toMutableMap()
+        updatedUsed[attackerPlayerId] = state.usedSabotagesFor(attackerPlayerId) + sabotageType
+
+        val updatedActiveSabotages = state.activeSabotages.toMutableMap()
+        updatedActiveSabotages[targetPlayerId] = ActiveSabotageState(
+            type = sabotageType,
+            remainingMs = SabotageConfig.durationMs(sabotageType),
+            sourceLabel = attackerLabel?.takeIf { it.isNotBlank() } ?: "P$attackerPlayerId"
+        )
+
+        val attackerText = attackerLabel?.takeIf { it.isNotBlank() } ?: "P$attackerPlayerId"
+        state = state.copy(
+            usedSabotages = updatedUsed,
+            activeSabotages = updatedActiveSabotages,
+            feedToastMessage = "$attackerText used ${sabotageType.displayName} on P$targetPlayerId!",
+            feedToastEventId = state.feedToastEventId + 1L
+        )
+        return state
+    }
+
+    /**
+     * Advances active sabotage timers and Co-op Rogue AI System Glitch countdown on each tick.
+     */
+    fun tickSabotageAndCoopGlitch(deltaMs: Long): GameState {
+        if (state.isPaused || state.isGameOver || deltaMs <= 0L) {
+            return state
+        }
+
+        val updatedActiveSabotages = mutableMapOf<Int, ActiveSabotageState>()
+        var changed = false
+        for ((playerId, debuff) in state.activeSabotages) {
+            val nextRemaining = debuff.remainingMs - deltaMs
+            if (nextRemaining > 0L) {
+                updatedActiveSabotages[playerId] = debuff.copy(remainingMs = nextRemaining)
+            }
+            changed = true
+        }
+
+        var warningActive = false
+        var feedToast: String? = null
+        if (state.sabotageEnabled && state.mode == GameMode.CO_OP) {
+            coopGlitchElapsedMs += deltaMs
+            if (coopGlitchElapsedMs >= SabotageConfig.COOP_GLITCH_INTERVAL_MS) {
+                coopGlitchElapsedMs -= SabotageConfig.COOP_GLITCH_INTERVAL_MS
+                val aliveTargets = state.config.spawnZones
+                    .map { it.playerId }
+                    .filter { pid ->
+                        !state.isPlayerEliminated(pid) &&
+                            !state.isPlayerDisconnected(pid) &&
+                            !state.isPlayerBlocked(pid)
+                    }
+                if (aliveTargets.isNotEmpty()) {
+                    val targetId = aliveTargets[random.nextInt(aliveTargets.size)]
+                    val glitchType = SabotageType.entries[random.nextInt(SabotageType.entries.size)]
+                    updatedActiveSabotages[targetId] = ActiveSabotageState(
+                        type = glitchType,
+                        remainingMs = SabotageConfig.durationMs(glitchType),
+                        sourceLabel = "SYSTEM"
+                    )
+                    feedToast = "⚠️ SYSTEM GLITCH: ${glitchType.displayName} on P$targetId!"
+                    changed = true
+                }
+            }
+            warningActive = coopGlitchElapsedMs >=
+                (SabotageConfig.COOP_GLITCH_INTERVAL_MS - SabotageConfig.COOP_GLITCH_WARNING_MS)
+        }
+
+        if (!changed && warningActive == state.systemGlitchWarningActive) {
+            return state
+        }
+
+        state = state.copy(
+            activeSabotages = updatedActiveSabotages,
+            systemGlitchWarningActive = warningActive,
+            feedToastMessage = feedToast ?: state.feedToastMessage,
+            feedToastEventId = if (feedToast != null) state.feedToastEventId + 1L else state.feedToastEventId
         )
         return state
     }

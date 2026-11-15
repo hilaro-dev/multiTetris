@@ -12,6 +12,8 @@ import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.SabotageConfig
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.VersusSubMode
 import com.multitetris.network.GameSessionController
@@ -361,7 +363,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             playerSkins = mergedSkins,
             config = BoardConfig.forPlayerCount(clampedCount),
             versusSubMode = resolvedSubMode,
-            playerTeams = defaultTeams
+            playerTeams = defaultTeams,
+            sabotageEnabled = true,
+            equippedSabotages = (1..clampedCount).associateWith { SabotageConfig.defaultLoadout }
         )
     }
 
@@ -406,8 +410,24 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             return
         }
-        if (!currentGame.isPaused && !currentGame.isGameOver) {
+        val activeSabotage = currentGame.activeSabotageFor(targetPlayerId)
+        if (activeSabotage?.type == SabotageType.BUTTON_FREEZE) {
+            return
+        }
+        if (activeSabotage?.type == SabotageType.DROP_JAMMER && action == PlayerAction.HARD_DROP) {
+            return
+        }
+        val effectiveAction = if (activeSabotage?.type == SabotageType.CONTROLS_FLIP) {
             when (action) {
+                PlayerAction.MOVE_LEFT -> PlayerAction.MOVE_RIGHT
+                PlayerAction.MOVE_RIGHT -> PlayerAction.MOVE_LEFT
+                else -> action
+            }
+        } else {
+            action
+        }
+        if (!currentGame.isPaused && !currentGame.isGameOver) {
+            when (effectiveAction) {
                 PlayerAction.MOVE_LEFT,
                 PlayerAction.MOVE_RIGHT -> soundEngine.playMove()
                 PlayerAction.ROTATE_CW -> soundEngine.playRotate()
@@ -415,7 +435,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 PlayerAction.HARD_DROP -> soundEngine.playHardDrop()
             }
         }
-        currentController().dispatchAction(targetPlayerId, action)
+        currentController().dispatchAction(targetPlayerId, effectiveAction)
+    }
+
+    fun onUseSabotage(targetPlayerId: Int, sabotageType: SabotageType) {
+        val currentGame = uiState.value.gameState
+        val attackerPlayerId = uiState.value.controlledPlayerId
+        if (!currentGame.sabotageEnabled ||
+            currentGame.isPaused ||
+            currentGame.isGameOver ||
+            attackerPlayerId in currentGame.eliminatedPlayerIds ||
+            attackerPlayerId in currentGame.blockedPlayerIds
+        ) {
+            return
+        }
+        currentController().triggerSabotage(attackerPlayerId, targetPlayerId, sabotageType)
     }
 
     fun toggleMute() {
@@ -464,6 +498,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setRoomVersusSubMode(subMode: VersusSubMode) {
         socialManager.setRoomVersusSubMode(subMode)
+    }
+
+    fun setRoomSabotageEnabled(enabled: Boolean) {
+        socialManager.setRoomSabotageEnabled(enabled)
+    }
+
+    fun toggleMySabotageSelection(sabotage: com.multitetris.game.SabotageType) {
+        socialManager.toggleMySabotageSelection(sabotage)
     }
 
     fun swapPlayerTeam(targetUid: String) {

@@ -63,6 +63,7 @@ class WebRtcSessionController(
     private var myProfile: UserProfile = UserProfile()
     private val syncedSkins = ConcurrentHashMap<Int, String>()
     private val syncedNames = ConcurrentHashMap<Int, String>()
+    private val syncedSabotages = ConcurrentHashMap<Int, List<com.multitetris.game.SabotageType>>()
 
     private var observerJob: Job? = null
     private var packetJob: Job? = null
@@ -140,6 +141,7 @@ class WebRtcSessionController(
                 slot.nickname.ifBlank { "Player ${slot.slotIndex}" }
             }
             syncedNames[slot.slotIndex] = displayName
+            syncedSabotages[slot.slotIndex] = com.multitetris.game.SabotageConfig.resolveLoadout(slot.selectedSabotages)
         }
     }
 
@@ -160,12 +162,19 @@ class WebRtcSessionController(
         playerSkins: Map<Int, String>,
         config: BoardConfig,
         versusSubMode: VersusSubMode,
-        playerTeams: Map<Int, TeamColor>
+        playerTeams: Map<Int, TeamColor>,
+        sabotageEnabled: Boolean,
+        equippedSabotages: Map<Int, List<com.multitetris.game.SabotageType>>
     ) {
         val room = currentRoom ?: return
         if (room.myRole != MatchRole.HOST) return
 
         val now = clockMillis()
+        val resolvedEquipped = if (equippedSabotages.isNotEmpty()) {
+            equippedSabotages
+        } else {
+            syncedSabotages.toMap()
+        }
         val initial = synchronized(engineLock) {
             lastDropTimeMs.clear()
             for (zone in config.spawnZones) {
@@ -178,11 +187,49 @@ class WebRtcSessionController(
                 playerSkins = playerSkins,
                 currentTimeMillis = now,
                 versusSubMode = versusSubMode,
-                playerTeams = playerTeams
+                playerTeams = playerTeams,
+                sabotageEnabled = sabotageEnabled,
+                equippedSabotages = resolvedEquipped
             )
         }
         publishHostStateAndBroadcast(initial, now, forceSend = true)
         startHostPhysicsLoop()
+    }
+
+    override fun triggerSabotage(
+        attackerPlayerId: Int,
+        targetPlayerId: Int,
+        sabotageType: com.multitetris.game.SabotageType
+    ) {
+        val room = currentRoom ?: return
+        if (_sessionState.value.status != ConnectionStatus.CONNECTED) return
+
+        if (room.myRole == MatchRole.HOST) {
+            val now = clockMillis()
+            val updated = synchronized(engineLock) {
+                hostEngine.useSabotage(
+                    attackerPlayerId = 1,
+                    targetPlayerId = targetPlayerId,
+                    sabotageType = sabotageType,
+                    attackerLabel = syncedNames[1]
+                )
+            }
+            publishHostStateAndBroadcast(updated, now, forceSend = true)
+        } else {
+            val targetUid = room.resolvedPlayers()
+                .firstOrNull { it.slotIndex == targetPlayerId }
+                ?.uid
+                .orEmpty()
+            signalingClient.sendPacket(
+                UseSabotagePacket(
+                    attackerUid = myProfile.uid,
+                    targetUid = targetUid,
+                    sabotageType = sabotageType,
+                    attackerPlayerId = room.mySlotIndex,
+                    targetPlayerId = targetPlayerId
+                )
+            )
+        }
     }
 
     override fun dispatchAction(playerId: Int, action: PlayerAction) {
@@ -220,7 +267,9 @@ class WebRtcSessionController(
                 playerSkins = syncedSkins.toMap(),
                 config = BoardConfig.forPlayerCount(playerCount),
                 versusSubMode = room.versusSubMode,
-                playerTeams = teamsMap
+                playerTeams = teamsMap,
+                sabotageEnabled = room.sabotageEnabled,
+                equippedSabotages = syncedSabotages.toMap()
             )
         } else {
             lastReceivedTick = -1L
@@ -353,12 +402,19 @@ class WebRtcSessionController(
 
         val mySkin = syncedSkins[mySlot] ?: myProfile.selectedSkinId.ifBlank { "classic" }
         val myNick = syncedNames[mySlot] ?: myProfile.nickname.ifBlank { "Player $mySlot" }
+        val mySabotages = room.resolvedPlayers()
+            .firstOrNull { it.slotIndex == mySlot }
+            ?.selectedSabotages
+            ?.let { com.multitetris.game.SabotageConfig.resolveLoadout(it) }
+            ?: com.multitetris.game.SabotageConfig.defaultLoadout
+        syncedSabotages[mySlot] = mySabotages
         signalingClient.sendPacket(
             HandshakePacket(
                 nickname = myNick,
                 skinId = mySkin,
                 uid = myProfile.uid,
-                slotIndex = mySlot
+                slotIndex = mySlot,
+                selectedSabotages = mySabotages
             )
         )
 
@@ -371,7 +427,9 @@ class WebRtcSessionController(
                 playerSkins = syncedSkins.toMap(),
                 config = BoardConfig.forPlayerCount(playerCount),
                 versusSubMode = room.versusSubMode,
-                playerTeams = teamsMap
+                playerTeams = teamsMap,
+                sabotageEnabled = room.sabotageEnabled,
+                equippedSabotages = syncedSabotages.toMap()
             )
         }
     }
@@ -417,6 +475,9 @@ class WebRtcSessionController(
                 if (packet.nickname.isNotBlank()) {
                     syncedNames[resolvedSlot] = packet.nickname
                 }
+                if (packet.selectedSabotages.isNotEmpty()) {
+                    syncedSabotages[resolvedSlot] = com.multitetris.game.SabotageConfig.resolveLoadout(packet.selectedSabotages)
+                }
                 _sessionState.update { state ->
                     state.copy(
                         players = state.players.map { endpoint ->
@@ -451,6 +512,31 @@ class WebRtcSessionController(
                         lastDropTimeMs[targetSlot] = now
                     }
                     next
+                }
+                publishHostStateAndBroadcast(updated, now, forceSend = true)
+            }
+
+            is UseSabotagePacket -> {
+                if (room.myRole != MatchRole.HOST) return
+                val attackerSlot = room.resolvedPlayers()
+                    .firstOrNull { it.uid == packet.attackerUid || it.uid == incoming.fromUid }
+                    ?.slotIndex
+                    ?: incoming.slotIndex.takeIf { it in 2..4 }
+                    ?: packet.attackerPlayerId.coerceIn(2, 4)
+                val targetSlot = if (packet.targetUid.isNotBlank()) {
+                    room.resolvedPlayers().firstOrNull { it.uid == packet.targetUid }?.slotIndex
+                        ?: packet.targetPlayerId
+                } else {
+                    packet.targetPlayerId
+                }
+                val now = clockMillis()
+                val updated = synchronized(engineLock) {
+                    hostEngine.useSabotage(
+                        attackerPlayerId = attackerSlot,
+                        targetPlayerId = targetSlot,
+                        sabotageType = packet.sabotageType,
+                        attackerLabel = syncedNames[attackerSlot]
+                    )
                 }
                 publishHostStateAndBroadcast(updated, now, forceSend = true)
             }
@@ -498,7 +584,9 @@ class WebRtcSessionController(
                         playerSkins = syncedSkins.toMap(),
                         config = BoardConfig.forPlayerCount(playerCount),
                         versusSubMode = room.versusSubMode,
-                        playerTeams = teamsMap
+                        playerTeams = teamsMap,
+                        sabotageEnabled = room.sabotageEnabled,
+                        equippedSabotages = syncedSabotages.toMap()
                     )
                 } else {
                     lastReceivedTick = -1L
@@ -510,22 +598,31 @@ class WebRtcSessionController(
     private fun startHostPhysicsLoop() {
         hostLoopJob?.cancel()
         hostLoopJob = scope.launch {
+            var lastTickMs = clockMillis()
             while (isActive) {
                 delay(HOST_FRAME_INTERVAL_MS)
-                if (_sessionState.value.status != ConnectionStatus.CONNECTED) continue
+                if (_sessionState.value.status != ConnectionStatus.CONNECTED) {
+                    lastTickMs = clockMillis()
+                    continue
+                }
 
                 val now = clockMillis()
+                val deltaMs = (now - lastTickMs).coerceIn(0L, 250L)
+                lastTickMs = now
                 var stateMutated = false
                 val latestState = synchronized(engineLock) {
                     val current = hostEngine.state
                     if (current.isPaused || current.isGameOver) {
                         current
                     } else {
-                        val orderedPlayers = current.activePieces.values
+                        var workingState = hostEngine.tickSabotageAndCoopGlitch(deltaMs)
+                        if (workingState != current) {
+                            stateMutated = true
+                        }
+                        val orderedPlayers = workingState.activePieces.values
                             .sortedByDescending { it.y }
                             .map { it.playerId }
 
-                        var workingState = current
                         for (playerId in orderedPlayers) {
                             val lastDrop = lastDropTimeMs[playerId] ?: now
                             val interval = hostEngine.getDropIntervalMs(playerId, now)

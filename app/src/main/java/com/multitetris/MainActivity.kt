@@ -176,6 +176,8 @@ fun MultiTetrisApp(
                         connectedPeerUids = uiState.connectedPeerUids,
                         onInviteFriend = gameViewModel::inviteFriendToRoom,
                         onSetVersusSubMode = gameViewModel::setRoomVersusSubMode,
+                        onSetSabotageEnabled = gameViewModel::setRoomSabotageEnabled,
+                        onToggleSabotage = gameViewModel::toggleMySabotageSelection,
                         onSwapPlayerTeam = gameViewModel::swapPlayerTeam,
                         onStartMatch = gameViewModel::startRoomMatch,
                         onCancelLobby = {
@@ -196,6 +198,7 @@ fun MultiTetrisApp(
                     onSwitchFocus = gameViewModel::switchControlFocus,
                     onSelectFocusPlayer = gameViewModel::selectControlPlayer,
                     onAction = gameViewModel::onPlayerAction,
+                    onUseSabotage = gameViewModel::onUseSabotage,
                     onTogglePause = gameViewModel::togglePause,
                     onRestart = gameViewModel::restartGame,
                     onExitToHome = {

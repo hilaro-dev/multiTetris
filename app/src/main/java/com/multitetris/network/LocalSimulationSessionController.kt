@@ -5,6 +5,7 @@ import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.CoroutineScope
@@ -45,7 +46,9 @@ class LocalSimulationSessionController(
         playerSkins: Map<Int, String>,
         config: BoardConfig,
         versusSubMode: VersusSubMode,
-        playerTeams: Map<Int, TeamColor>
+        playerTeams: Map<Int, TeamColor>,
+        sabotageEnabled: Boolean,
+        equippedSabotages: Map<Int, List<SabotageType>>
     ) {
         stop()
         val now = clockMillis()
@@ -60,7 +63,9 @@ class LocalSimulationSessionController(
                 playerSkins = playerSkins,
                 currentTimeMillis = now,
                 versusSubMode = versusSubMode,
-                playerTeams = playerTeams
+                playerTeams = playerTeams,
+                sabotageEnabled = sabotageEnabled,
+                equippedSabotages = equippedSabotages
             )
         }
 
@@ -99,6 +104,19 @@ class LocalSimulationSessionController(
                 lastDropTimeMs[playerId] = now
             }
             next
+        }
+        publishState(updated, now)
+    }
+
+    override fun triggerSabotage(attackerPlayerId: Int, targetPlayerId: Int, sabotageType: SabotageType) {
+        val now = clockMillis()
+        val updated = synchronized(engineLock) {
+            engine.useSabotage(
+                attackerPlayerId = attackerPlayerId,
+                targetPlayerId = targetPlayerId,
+                sabotageType = sabotageType,
+                attackerLabel = "Player $attackerPlayerId"
+            )
         }
         publishState(updated, now)
     }
@@ -153,12 +171,15 @@ class LocalSimulationSessionController(
                     if (current.isPaused || current.isGameOver) {
                         current
                     } else {
+                        var workingState = engine.tickSabotageAndCoopGlitch(TICK_INTERVAL_MS)
+                        if (workingState != current) {
+                            changed = true
+                        }
                         // Step lower pieces first (larger y) so stacked active pieces fall smoothly together.
-                        val orderedPlayers = current.activePieces.values
+                        val orderedPlayers = workingState.activePieces.values
                             .sortedByDescending { it.y }
                             .map { it.playerId }
 
-                        var workingState = current
                         for (playerId in orderedPlayers) {
                             val lastDrop = lastDropTimeMs[playerId] ?: now
                             val interval = engine.getDropIntervalMs(playerId, now)

@@ -1,12 +1,14 @@
 package com.multitetris.network.webrtc
 
 import com.multitetris.game.ActivePiece
+import com.multitetris.game.ActiveSabotageState
 import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.LockedCell
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
 import com.multitetris.game.VersusSubMode
@@ -25,7 +27,8 @@ data class HandshakePacket(
     val nickname: String,
     val skinId: String,
     val uid: String = "",
-    val slotIndex: Int = 0
+    val slotIndex: Int = 0,
+    val selectedSabotages: List<SabotageType> = emptyList()
 ) : NetPacket
 
 @Serializable
@@ -70,6 +73,16 @@ data class PieceState(
 }
 
 @Serializable
+@SerialName("use_sabotage")
+data class UseSabotagePacket(
+    val attackerUid: String = "",
+    val targetUid: String = "",
+    val sabotageType: SabotageType,
+    val attackerPlayerId: Int = 0,
+    val targetPlayerId: Int = 0
+) : NetPacket
+
+@Serializable
 @SerialName("state")
 data class GameStatePacket(
     val tick: Long,
@@ -101,7 +114,12 @@ data class GameStatePacket(
     val blockedPlayerIds: Set<Int> = emptySet(),
     val disconnectedPlayerIds: Set<Int> = emptySet(),
     val feedToastMessage: String? = null,
-    val feedToastEventId: Long = 0L
+    val feedToastEventId: Long = 0L,
+    val sabotageEnabled: Boolean = false,
+    val equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
+    val usedSabotages: Map<Int, Set<SabotageType>> = emptyMap(),
+    val activeSabotages: Map<Int, ActiveSabotageState> = emptyMap(),
+    val systemGlitchWarningActive: Boolean = false
 ) : NetPacket {
 
     fun toClientGameState(
@@ -175,7 +193,12 @@ data class GameStatePacket(
             blockedPlayerIds = blockedPlayerIds,
             disconnectedPlayerIds = disconnectedPlayerIds,
             feedToastMessage = feedToastMessage,
-            feedToastEventId = feedToastEventId
+            feedToastEventId = feedToastEventId,
+            sabotageEnabled = sabotageEnabled,
+            equippedSabotages = equippedSabotages,
+            usedSabotages = usedSabotages,
+            activeSabotages = activeSabotages,
+            systemGlitchWarningActive = systemGlitchWarningActive
         )
     }
 
@@ -224,7 +247,12 @@ data class GameStatePacket(
                 blockedPlayerIds = state.blockedPlayerIds,
                 disconnectedPlayerIds = state.disconnectedPlayerIds,
                 feedToastMessage = state.feedToastMessage,
-                feedToastEventId = state.feedToastEventId
+                feedToastEventId = state.feedToastEventId,
+                sabotageEnabled = state.sabotageEnabled,
+                equippedSabotages = state.equippedSabotages,
+                usedSabotages = state.usedSabotages,
+                activeSabotages = state.activeSabotages,
+                systemGlitchWarningActive = state.systemGlitchWarningActive
             )
         }
     }

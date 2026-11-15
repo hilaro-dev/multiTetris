@@ -1,12 +1,14 @@
 package com.multitetris.network
 
 import com.multitetris.game.ActivePiece
+import com.multitetris.game.ActiveSabotageState
 import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.LockedCell
 import com.multitetris.game.MultiTetrisEngine
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.TetrominoType
 import com.multitetris.game.VersusSubMode
@@ -18,6 +20,7 @@ import com.multitetris.network.webrtc.NetPacketCodec
 import com.multitetris.network.webrtc.PendingIceCandidateQueue
 import com.multitetris.network.webrtc.PieceState
 import com.multitetris.network.webrtc.RematchRequestPacket
+import com.multitetris.network.webrtc.UseSabotagePacket
 import com.multitetris.ui.skin.SkinCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -30,8 +33,22 @@ class WebRtcPacketsAndQueueTest {
     @Test
     fun netPacketCodec_serializesAndDeserializesAllPacketTypes() {
         val packets = listOf(
-            HandshakePacket(nickname = "HostNova", skinId = "neon_cyber"),
+            HandshakePacket(
+                nickname = "HostNova",
+                skinId = "neon_cyber",
+                selectedSabotages = listOf(
+                    com.multitetris.game.SabotageType.CONTROLS_FLIP,
+                    com.multitetris.game.SabotageType.BUTTON_FREEZE
+                )
+            ),
             InputPacket(seq = 42, action = PlayerAction.ROTATE_CW),
+            UseSabotagePacket(
+                attackerUid = "uid_1",
+                targetUid = "uid_2",
+                sabotageType = SabotageType.BUTTON_FREEZE,
+                attackerPlayerId = 1,
+                targetPlayerId = 2
+            ),
             RematchRequestPacket(requestedByPlayerId = 2, timestamp = 123_456L),
             GameStatePacket(
                 tick = 99L,
@@ -50,7 +67,21 @@ class WebRtcPacketsAndQueueTest {
                 playerPlacements = mapOf(3 to 4),
                 blockedPlayerIds = setOf(4),
                 feedToastMessage = "P3 was eliminated!",
-                feedToastEventId = 7L
+                feedToastEventId = 7L,
+                sabotageEnabled = true,
+                equippedSabotages = mapOf(
+                    1 to listOf(SabotageType.BLINDFOLD_FOG, SabotageType.TURBO_DROP),
+                    2 to listOf(SabotageType.BUTTON_FREEZE, SabotageType.DROP_JAMMER)
+                ),
+                usedSabotages = mapOf(1 to setOf(SabotageType.BLINDFOLD_FOG)),
+                activeSabotages = mapOf(
+                    2 to ActiveSabotageState(
+                        type = SabotageType.BLINDFOLD_FOG,
+                        remainingMs = 4_200L,
+                        sourceLabel = "HostNova"
+                    )
+                ),
+                systemGlitchWarningActive = true
             )
         )
 
@@ -61,6 +92,7 @@ class WebRtcPacketsAndQueueTest {
             when (original) {
                 is HandshakePacket -> assertEquals(original, decoded)
                 is InputPacket -> assertEquals(original, decoded)
+                is UseSabotagePacket -> assertEquals(original, decoded)
                 is RematchRequestPacket -> assertEquals(original, decoded)
                 is GameStatePacket -> {
                     val decodedState = decoded as GameStatePacket
@@ -76,6 +108,11 @@ class WebRtcPacketsAndQueueTest {
                     assertEquals(original.blockedPlayerIds, decodedState.blockedPlayerIds)
                     assertEquals(original.feedToastMessage, decodedState.feedToastMessage)
                     assertEquals(original.feedToastEventId, decodedState.feedToastEventId)
+                    assertEquals(original.sabotageEnabled, decodedState.sabotageEnabled)
+                    assertEquals(original.equippedSabotages, decodedState.equippedSabotages)
+                    assertEquals(original.usedSabotages, decodedState.usedSabotages)
+                    assertEquals(original.activeSabotages, decodedState.activeSabotages)
+                    assertEquals(original.systemGlitchWarningActive, decodedState.systemGlitchWarningActive)
                 }
             }
         }
@@ -177,6 +214,41 @@ class WebRtcPacketsAndQueueTest {
         assertEquals(teams, clientState.playerTeams)
         assertEquals(TeamColor.CYAN, clientState.winningTeam)
         assertEquals(LockedCell(4, TetrominoType.T, "quantum_singularity"), clientState.grid[19][13])
+    }
+
+    @Test
+    fun gameStatePacket_preservesSabotageStateAndLoadouts() {
+        val equipped = mapOf(
+            1 to listOf(SabotageType.BLINDFOLD_FOG, SabotageType.CONTROLS_FLIP),
+            2 to listOf(SabotageType.BUTTON_FREEZE, SabotageType.DROP_JAMMER)
+        )
+        val used = mapOf(1 to setOf(SabotageType.BLINDFOLD_FOG))
+        val active = mapOf(
+            2 to ActiveSabotageState(
+                type = SabotageType.BLINDFOLD_FOG,
+                remainingMs = 4_500L,
+                sourceLabel = "Host"
+            )
+        )
+        val hostState = GameState(
+            config = BoardConfig.forPlayerCount(2),
+            mode = GameMode.VERSUS,
+            grid = List(20) { List<LockedCell?>(10) { null } },
+            sabotageEnabled = true,
+            equippedSabotages = equipped,
+            usedSabotages = used,
+            activeSabotages = active,
+            systemGlitchWarningActive = false
+        )
+        val packet = GameStatePacket.fromGameState(tick = 15L, state = hostState, nowMillis = 5_000L)
+        val decoded = NetPacketCodec.decode(NetPacketCodec.encode(packet)) as GameStatePacket
+        val clientState = decoded.toClientGameState(MultiTetrisEngine(), localClockMillis = 5_000L)
+
+        assertTrue(clientState.sabotageEnabled)
+        assertEquals(equipped, clientState.equippedSabotages)
+        assertEquals(used, clientState.usedSabotages)
+        assertEquals(active, clientState.activeSabotages)
+        assertEquals(false, clientState.systemGlitchWarningActive)
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.flow.StateFlow
@@ -56,10 +57,14 @@ interface GameSessionController {
         playerSkins: Map<Int, String>,
         config: BoardConfig = BoardConfig(),
         versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
-        playerTeams: Map<Int, TeamColor> = emptyMap()
+        playerTeams: Map<Int, TeamColor> = emptyMap(),
+        sabotageEnabled: Boolean = false,
+        equippedSabotages: Map<Int, List<SabotageType>> = emptyMap()
     )
 
     fun dispatchAction(playerId: Int, action: PlayerAction)
+
+    fun triggerSabotage(attackerPlayerId: Int, targetPlayerId: Int, sabotageType: SabotageType) {}
 
     fun switchControlledPlayer(playerId: Int)
 

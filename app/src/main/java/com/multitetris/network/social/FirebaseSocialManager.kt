@@ -10,6 +10,8 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
 import com.multitetris.game.GameMode
+import com.multitetris.game.SabotageConfig
+import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
 import com.multitetris.game.VersusSubMode
 import kotlinx.coroutines.CoroutineScope
@@ -834,6 +836,7 @@ class FirebaseSocialManager(
                     "hostSkinId" to room.hostSkinId,
                     "mode" to room.mode.name,
                     "versusSubMode" to VersusSubMode.FREE_FOR_ALL.name,
+                    "sabotageEnabled" to false,
                     "state" to "lobby",
                     "createdAt" to ServerValue.TIMESTAMP,
                     "players" to mapOf(
@@ -843,7 +846,8 @@ class FirebaseSocialManager(
                             "skinId" to mySkinId,
                             "slotIndex" to 1,
                             "team" to TeamColor.CYAN.name,
-                            "ready" to true
+                            "ready" to true,
+                            "sabotages" to SabotageConfig.defaultLoadout.map { it.name }
                         )
                     )
                 )
@@ -918,6 +922,8 @@ class FirebaseSocialManager(
                 val subModeRaw = snapshot.child("versusSubMode").getValue(String::class.java)
                 val subMode = runCatching { VersusSubMode.valueOf(subModeRaw.orEmpty()) }
                     .getOrDefault(baseRoom.versusSubMode)
+                val sabotageEnabled = snapshot.child("sabotageEnabled").getValue(Boolean::class.java)
+                    ?: baseRoom.sabotageEnabled
                 val stateStr = snapshot.child("state").getValue(String::class.java) ?: baseRoom.state
 
                 val parsedPlayers = snapshot.child("players").children.mapNotNull { playerSnap ->
@@ -934,13 +940,24 @@ class FirebaseSocialManager(
                     val team = runCatching { TeamColor.valueOf(teamRaw.orEmpty()) }
                         .getOrDefault(if (slotIndex <= 2) TeamColor.CYAN else TeamColor.MAGENTA)
                     val ready = playerSnap.child("ready").getValue(Boolean::class.java) ?: true
+                    val parsedSabotages = playerSnap.child("sabotages").children.mapNotNull { sabSnap ->
+                        runCatching {
+                            SabotageType.valueOf(sabSnap.getValue(String::class.java).orEmpty())
+                        }.getOrNull()
+                    }.distinct().take(SabotageConfig.MAX_DRAFT_SLOTS)
+                    val selectedSabotages = if (playerSnap.hasChild("sabotages")) {
+                        parsedSabotages
+                    } else {
+                        SabotageConfig.defaultLoadout
+                    }
                     RoomPlayerSlot(
                         uid = pUid,
                         nickname = nickname,
                         skinId = skinId,
                         slotIndex = slotIndex,
                         team = team,
-                        ready = ready
+                        ready = ready,
+                        selectedSabotages = selectedSabotages
                     )
                 }.sortedBy { it.slotIndex }
 
@@ -995,7 +1012,8 @@ class FirebaseSocialManager(
                     state = stateStr,
                     players = effectivePlayers,
                     versusSubMode = subMode,
-                    mySlotIndex = mySlot
+                    mySlotIndex = mySlot,
+                    sabotageEnabled = sabotageEnabled
                 )
                 if (updatedRoom != currentFound?.room) {
                     _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(updatedRoom)) }
@@ -1097,10 +1115,52 @@ class FirebaseSocialManager(
         }
 
         clearSentRoomInvites()
+        val matchRef = db.getReference("matches").child(room.matchId)
+        if (room.sabotageEnabled && room.mode == GameMode.VERSUS) {
+            val updates = mutableMapOf<String, Any?>()
+            for (slot in room.resolvedPlayers()) {
+                if (slot.selectedSabotages.size < SabotageConfig.MAX_DRAFT_SLOTS) {
+                    val resolved = SabotageConfig.resolveLoadout(slot.selectedSabotages)
+                    updates["players/${slot.uid}/sabotages"] = resolved.map { it.name }
+                }
+            }
+            updates["state"] = "playing"
+            matchRef.updateChildren(updates)
+        } else {
+            matchRef.child("state").setValue("playing")
+        }
+    }
+
+    fun setRoomSabotageEnabled(enabled: Boolean) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST) return
         db.getReference("matches")
             .child(room.matchId)
-            .child("state")
-            .setValue("playing")
+            .child("sabotageEnabled")
+            .setValue(enabled)
+    }
+
+    fun toggleMySabotageSelection(sabotage: SabotageType) {
+        val db = database ?: return
+        val myUid = _socialState.value.userProfile.uid
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (myUid.isBlank()) return
+
+        val current = room.resolvedPlayers()
+            .firstOrNull { it.uid == myUid }
+            ?.selectedSabotages
+            ?: emptyList()
+        val updated = SabotageConfig.toggleSelection(current, sabotage)
+
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("players")
+            .child(myUid)
+            .child("sabotages")
+            .setValue(updated.map { it.name })
     }
 
     fun acceptRoomInvite(invite: RoomInvite) {
@@ -1184,7 +1244,8 @@ class FirebaseSocialManager(
                     "skinId" to mySkinId,
                     "slotIndex" to mySlotIndex,
                     "team" to defaultTeam.name,
-                    "ready" to true
+                    "ready" to true,
+                    "sabotages" to SabotageConfig.defaultLoadout.map { it.name }
                 )
                 playerRef.setValue(playerPayload).await()
 
