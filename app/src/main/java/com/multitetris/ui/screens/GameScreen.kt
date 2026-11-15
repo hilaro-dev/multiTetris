@@ -837,18 +837,55 @@ private fun BoardWithOverlays(
                     .aspectRatio(boardRatio)
             }
 
+            val localBlindfold = gameState.activeSabotageFor(controlledPlayerId)
+                ?.takeIf { it.type == SabotageType.BLINDFOLD_FOG }
+
             Surface(
                 modifier = sizeModifier,
                 shape = RoundedCornerShape(12.dp),
                 color = Color(0xFF060911),
                 border = BorderStroke(1.5.dp, SubtleBorder)
             ) {
-                TetrisBoardCanvas(
-                    gameState = gameState,
-                    controlledPlayerId = controlledPlayerId,
-                    sabotagedPlayers = networkState.activeSabotagedPlayerIds,
-                    modifier = Modifier.fillMaxSize()
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    TetrisBoardCanvas(
+                        gameState = gameState,
+                        controlledPlayerId = controlledPlayerId,
+                        sabotagedPlayers = networkState.activeSabotagedPlayerIds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (localBlindfold != null &&
+                        !gameState.isPaused &&
+                        !gameState.isGameOver &&
+                        networkState.status != ConnectionStatus.DISCONNECTED
+                    ) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.Center),
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color(0xCC0B1026),
+                            border = BorderStroke(1.2.dp, Color(0xFF94A3B8).copy(alpha = 0.75f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.VisibilityOff,
+                                    contentDescription = "Blinded",
+                                    tint = Color(0xFFCBD5E1),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "BLINDED • ${localBlindfold.remainingSeconds}s",
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.8.sp
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1524,56 +1561,6 @@ fun TetrisBoardCanvas(
             }
         }
 
-        // 2b. Blindfold fog debuff: animated dark swirling fog over bottom 10 rows
-        if (gameState.activeSabotageFor(controlledPlayerId)?.type == SabotageType.BLINDFOLD_FOG) {
-            val fogStartRow = (rows - 10).coerceAtLeast(0)
-            val fogTop = fogStartRow * cellH
-            val fogHeight = (size.height - fogTop).coerceAtLeast(0f)
-            val phaseRad = ((animTimeMillis % 4000L) / 4000f) * (2f * Math.PI.toFloat())
-            clipRect(left = 0f, top = fogTop, right = size.width, bottom = size.height) {
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xEE050812),
-                            Color(0xFF04060E),
-                            Color(0xFF070B18)
-                        ),
-                        startY = fogTop,
-                        endY = size.height
-                    ),
-                    topLeft = Offset(0f, fogTop),
-                    size = Size(size.width, fogHeight)
-                )
-                for (band in 0 until 5) {
-                    val bandY = fogTop + fogHeight * ((band + 0.5f) / 5f)
-                    val driftX = sin(phaseRad + band * 1.3f) * size.width * 0.16f
-                    val driftY = cos(phaseRad * 1.5f + band * 0.9f) * cellH * 0.45f
-                    val plumeCenter = Offset(size.width * 0.5f + driftX, bandY + driftY)
-                    val radius = (size.width * 0.42f).coerceAtLeast(1f)
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                Color(0x5538BDF8),
-                                Color(0x2864748B),
-                                Color.Transparent
-                            ),
-                            center = plumeCenter,
-                            radius = radius
-                        ),
-                        radius = radius,
-                        center = plumeCenter
-                    )
-                }
-            }
-            drawLine(
-                color = Color(0xFF64748B).copy(alpha = 0.75f),
-                start = Offset(0f, fogTop),
-                end = Offset(size.width, fogTop),
-                strokeWidth = 2f,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), phaseRad * 12f)
-            )
-        }
-
         // 3. Draw active falling pieces for all players
         for (piece in gameState.activePieces.values) {
             val renderer = SkinRegistry.resolve(piece.skinId)
@@ -1655,6 +1642,52 @@ fun TetrisBoardCanvas(
                             baseY + dirY * spread - pSize / 2f
                         ),
                         size = Size(pSize, pSize)
+                    )
+                }
+            }
+        }
+
+        // 5. Blindfold fog debuff: 100% opaque base + animated swirling fog waves on top of all blocks
+        if (gameState.activeSabotageFor(controlledPlayerId)?.type == SabotageType.BLINDFOLD_FOG) {
+            val phaseRad = ((animTimeMillis % 4000L) / 4000f) * (2f * Math.PI.toFloat())
+            clipRect(left = 0f, top = 0f, right = size.width, bottom = size.height) {
+                drawRect(
+                    color = Color(0xFF0A0A12),
+                    topLeft = Offset.Zero,
+                    size = size,
+                    alpha = 1.0f
+                )
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF04060E).copy(alpha = 0.45f),
+                            Color(0xFF0B1026).copy(alpha = 0.55f),
+                            Color(0xFF050814).copy(alpha = 0.45f)
+                        ),
+                        startY = 0f,
+                        endY = size.height
+                    ),
+                    topLeft = Offset.Zero,
+                    size = size
+                )
+                for (band in 0 until 7) {
+                    val bandY = size.height * ((band + 0.5f) / 7f)
+                    val driftX = sin(phaseRad + band * 1.15f) * size.width * 0.2f
+                    val driftY = cos(phaseRad * 1.35f + band * 0.85f) * cellH * 0.6f
+                    val plumeCenter = Offset(size.width * 0.5f + driftX, bandY + driftY)
+                    val radius = (size.width * 0.46f).coerceAtLeast(1f)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF38BDF8).copy(alpha = 0.16f),
+                                Color(0xFF6366F1).copy(alpha = 0.12f),
+                                Color.Transparent
+                            ),
+                            center = plumeCenter,
+                            radius = radius
+                        ),
+                        radius = radius,
+                        center = plumeCenter
                     )
                 }
             }
