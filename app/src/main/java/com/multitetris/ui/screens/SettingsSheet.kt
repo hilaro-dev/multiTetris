@@ -153,7 +153,15 @@ fun SettingsSheet(
                 onCheckedChange = onSetVibrationEnabled
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "MultiTetris v1.0",
+                color = TextSecondary.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 4.dp, bottom = 6.dp)
+            )
         }
     }
 }

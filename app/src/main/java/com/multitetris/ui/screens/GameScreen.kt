@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -179,6 +181,76 @@ fun GameScreen(
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
+    }
+
+    val shouldKeepScreenOn = !gameState.isGameOver
+    DisposableEffect(shouldKeepScreenOn) {
+        val window = context.findActivity()?.window
+        if (shouldKeepScreenOn) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
+    BackHandler(enabled = !gameState.isGameOver) {
+        showExitConfirmDialog = true
+    }
+
+    if (showExitConfirmDialog && !gameState.isGameOver) {
+        val strings = LocalStrings.current
+        val isTr = strings.gotIt == "Anladım"
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showExitConfirmDialog = false },
+            containerColor = SlateSurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
+            title = {
+                Text(
+                    text = if (isTr) "Oyundan Çıkılsın mı?" else "Leave Match?",
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Text(
+                    text = if (isTr) {
+                        "Mevcut maçtan bağlantınız kesilecek ve Ana Sayfaya döneceksiniz."
+                    } else {
+                        "You will disconnect from the current match and return to the Home Screen."
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitConfirmDialog = false
+                        onExitToHome()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonMagenta,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = if (isTr) "Çık" else "Leave",
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showExitConfirmDialog = false }) {
+                    Text(
+                        text = if (isTr) "Kal" else "Stay",
+                        color = CyberCyan,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        )
     }
 
     val controlledPlayerId = networkState.controlledPlayerId
