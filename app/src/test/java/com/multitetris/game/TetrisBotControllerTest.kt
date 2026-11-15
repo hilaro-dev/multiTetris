@@ -34,7 +34,8 @@ class TetrisBotControllerTest {
             assertTrue(
                 action == PlayerAction.ROTATE_CW ||
                     action == PlayerAction.MOVE_LEFT ||
-                    action == PlayerAction.MOVE_RIGHT
+                    action == PlayerAction.MOVE_RIGHT ||
+                    action == PlayerAction.SOFT_DROP
             )
             working = engine.applyAction(2, action, 1000L + steps * 100L)
             steps++
@@ -178,6 +179,123 @@ class TetrisBotControllerTest {
         val sabotage = bot.maybeSelectSabotage(state, 10_000L)
         assertNotNull(sabotage)
         assertTrue("Bot on CYAN team must target MAGENTA (3 or 4)", sabotage?.first == 3 || sabotage?.first == 4)
+    }
+
+    @Test
+    fun coopBotAvoidsTeammateGhostShadowAndHoldsBeforeMidAirCollision() {
+        val engine = MultiTetrisEngine()
+        val initial = engine.startNewGame(
+            mode = GameMode.CO_OP,
+            config = BoardConfig.forPlayerCount(2),
+            playerSkins = mapOf(1 to "classic", 2 to "neon_cyber"),
+            currentTimeMillis = 1000L
+        )
+
+        val cols = initial.config.width
+        // Human P1 is falling on the right side (columns cols-4..cols-3)
+        val humanPiece = ActivePiece(
+            playerId = 1,
+            tetrominoType = TetrominoType.O,
+            x = cols - 4,
+            y = 6,
+            rotation = 0,
+            skinId = "classic"
+        )
+        // Bot P2 spawns on the right side too, with O-piece at x = cols-4, y = 1
+        val botPiece = ActivePiece(
+            playerId = 2,
+            tetrominoType = TetrominoType.O,
+            x = cols - 4,
+            y = 1,
+            rotation = 0,
+            skinId = "neon_cyber"
+        )
+        val blockedState = initial.copy(
+            activePieces = mapOf(1 to humanPiece, 2 to botPiece)
+        )
+
+        val bot = TetrisBotController(botPlayerId = 2, difficulty = BotDifficulty.NORMAL)
+        var working = blockedState
+        var steps = 0
+        var hardDropX: Int? = null
+        while (steps < 25) {
+            val action = bot.nextAction(working) ?: break
+            if (action == PlayerAction.HARD_DROP) {
+                hardDropX = working.activePieces[2]?.x
+                break
+            }
+            working = applyActionToState(working, 2, action)
+            steps++
+        }
+
+        // Bot should steer away from human's columns (cols-4..cols-3) before dropping
+        assertNotNull("Bot should find an open column away from teammate ghost", hardDropX)
+        val humanCols = humanPiece.occupiedCells().map { it.x }.toSet()
+        val botDropCols = working.activePieces[2]?.occupiedCells()?.map { it.x }?.toSet().orEmpty()
+        assertTrue(
+            "Bot landing columns $botDropCols must not overlap teammate columns $humanCols",
+            botDropCols.intersect(humanCols).isEmpty()
+        )
+    }
+
+    @Test
+    fun coopBotHoldsWaitWhenTeammateMovesUnderneathDropPath() {
+        val engine = MultiTetrisEngine()
+        val initial = engine.startNewGame(
+            mode = GameMode.CO_OP,
+            config = BoardConfig.forPlayerCount(2),
+            playerSkins = mapOf(1 to "classic", 2 to "neon_cyber"),
+            currentTimeMillis = 1000L
+        )
+
+        // Step 1: Bot plans at x=2 while human is far away at x=8
+        val botStart = ActivePiece(
+            playerId = 2,
+            tetrominoType = TetrominoType.O,
+            x = 2,
+            y = 1,
+            rotation = 0,
+            skinId = "neon_cyber"
+        )
+        val humanFar = ActivePiece(
+            playerId = 1,
+            tetrominoType = TetrominoType.O,
+            x = 8,
+            y = 8,
+            rotation = 0,
+            skinId = "classic"
+        )
+        val bot = TetrisBotController(botPlayerId = 2, difficulty = BotDifficulty.NORMAL)
+        // Steer bot until it reaches its target X (where next action would be HARD_DROP)
+        var state = initial.copy(activePieces = mapOf(1 to humanFar, 2 to botStart))
+        var alignedBot = botStart
+        for (i in 0 until 20) {
+            val next = bot.nextAction(state) ?: break
+            if (next == PlayerAction.HARD_DROP) {
+                alignedBot = state.activePieces[2]!!
+                break
+            }
+            state = applyActionToState(state, 2, next)
+        }
+
+        // Step 2: Human moves directly underneath the aligned bot piece!
+        val humanUnderneath = ActivePiece(
+            playerId = 1,
+            tetrominoType = TetrominoType.O,
+            x = alignedBot.x,
+            y = alignedBot.y + 5,
+            rotation = 0,
+            skinId = "classic"
+        )
+        val collisionRiskState = state.copy(
+            activePieces = mapOf(1 to humanUnderneath, 2 to alignedBot)
+        )
+
+        val actionUnderRisk = bot.nextAction(collisionRiskState)
+        assertTrue(
+            "Bot must NOT hard-drop onto teammate's floating piece (got $actionUnderRisk)",
+            actionUnderRisk != PlayerAction.HARD_DROP
+        )
     }
 
     private fun applyActionToState(state: GameState, playerId: Int, action: PlayerAction): GameState {

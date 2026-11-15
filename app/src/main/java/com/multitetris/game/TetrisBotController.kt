@@ -26,7 +26,8 @@ class TetrisBotController(
     private data class PlannedMove(
         val targetRotation: Int,
         val targetX: Int,
-        val score: Int
+        val score: Int,
+        val expectedDropY: Int
     )
 
     private data class PlacementResult(
@@ -111,6 +112,10 @@ class TetrisBotController(
                     return PlayerAction.SOFT_DROP
                 }
                 lastEmittedSteeringAction = null
+                if (!isDropJammed && isDropPathBlockedByTeammate(state, piece, plan.expectedDropY)) {
+                    currentPlan = computeBestPlan(state, piece)
+                    return null
+                }
                 return if (isDropJammed) PlayerAction.SOFT_DROP else PlayerAction.HARD_DROP
             } else {
                 consecutiveStalls = 0
@@ -137,6 +142,10 @@ class TetrisBotController(
         }
 
         lastEmittedSteeringAction = null
+        if (!isDropJammed && isDropPathBlockedByTeammate(state, piece, plan.expectedDropY)) {
+            currentPlan = computeBestPlan(state, piece)
+            return null
+        }
         return if (isDropJammed) PlayerAction.SOFT_DROP else PlayerAction.HARD_DROP
     }
 
@@ -172,26 +181,16 @@ class TetrisBotController(
     private fun computeBestPlan(state: GameState, piece: ActivePiece): PlannedMove? {
         val rows = state.config.height
         val cols = state.config.width
-        val baseGrid = Array(rows) { r ->
+        val staticGrid = Array(rows) { r ->
             BooleanArray(cols) { c -> state.grid[r][c] != null }
         }
+        val simGrid = buildSimulationGrid(state, staticGrid, rows, cols)
 
-        val evaluated = ArrayList<Pair<PlannedMove, Array<BooleanArray>>>()
-
-        for (rot in 0..3) {
-            for (targetX in -2 until cols + 2) {
-                if (!canOccupy(baseGrid, piece, targetX, piece.y, rot, rows, cols)) continue
-
-                var dropY = piece.y
-                while (canOccupy(baseGrid, piece, targetX, dropY + 1, rot, rows, cols)) {
-                    dropY++
-                }
-
-                val result = evaluatePlacement(baseGrid, piece, targetX, dropY, rot, rows, cols)
-                evaluated.add(PlannedMove(targetRotation = rot, targetX = targetX, score = result.score) to result.clearedGrid)
-            }
+        var evaluated = evaluateCandidatesOnGrid(simGrid, piece, rows, cols)
+        if (evaluated.isEmpty() && state.mode == GameMode.CO_OP) {
+            // Fallback to static grid only if teammate ghosts temporarily cover all placements
+            evaluated = evaluateCandidatesOnGrid(staticGrid, piece, rows, cols)
         }
-
         if (evaluated.isEmpty()) return null
         evaluated.sortByDescending { it.first.score }
 
@@ -229,6 +228,111 @@ class TetrisBotController(
             return candidates[random.nextInt(1, poolSize)]
         }
         return candidates.first()
+    }
+
+    private fun buildSimulationGrid(
+        state: GameState,
+        staticGrid: Array<BooleanArray>,
+        rows: Int,
+        cols: Int
+    ): Array<BooleanArray> {
+        val simGrid = Array(rows) { r -> staticGrid[r].clone() }
+        if (state.mode != GameMode.CO_OP) return simGrid
+
+        for ((otherId, otherPiece) in state.activePieces) {
+            if (otherId == botPlayerId || state.isPlayerEliminated(otherId)) continue
+
+            // Mark teammate's current falling cells as occupied
+            for (cell in otherPiece.occupiedCells()) {
+                if (cell.y in 0 until rows && cell.x in 0 until cols) {
+                    simGrid[cell.y][cell.x] = true
+                }
+            }
+
+            // Project teammate's landing ghost shadow on the static grid and mark as occupied
+            var ghostY = otherPiece.y
+            while (canOccupy(staticGrid, otherPiece, otherPiece.x, ghostY + 1, otherPiece.rotation, rows, cols)) {
+                ghostY++
+            }
+            for (cell in otherPiece.occupiedCells(atY = ghostY)) {
+                if (cell.y in 0 until rows && cell.x in 0 until cols) {
+                    simGrid[cell.y][cell.x] = true
+                }
+            }
+        }
+        return simGrid
+    }
+
+    private fun evaluateCandidatesOnGrid(
+        grid: Array<BooleanArray>,
+        piece: ActivePiece,
+        rows: Int,
+        cols: Int
+    ): ArrayList<Pair<PlannedMove, Array<BooleanArray>>> {
+        val evaluated = ArrayList<Pair<PlannedMove, Array<BooleanArray>>>()
+        for (rot in 0..3) {
+            for (targetX in -2 until cols + 2) {
+                if (!canOccupy(grid, piece, targetX, piece.y, rot, rows, cols)) continue
+
+                var dropY = piece.y
+                while (canOccupy(grid, piece, targetX, dropY + 1, rot, rows, cols)) {
+                    dropY++
+                }
+
+                val result = evaluatePlacement(grid, piece, targetX, dropY, rot, rows, cols)
+                evaluated.add(
+                    PlannedMove(
+                        targetRotation = rot,
+                        targetX = targetX,
+                        score = result.score,
+                        expectedDropY = dropY
+                    ) to result.clearedGrid
+                )
+            }
+        }
+        return evaluated
+    }
+
+    private fun isDropPathBlockedByTeammate(
+        state: GameState,
+        piece: ActivePiece,
+        expectedDropY: Int
+    ): Boolean {
+        if (state.mode != GameMode.CO_OP) return false
+
+        val rows = state.config.height
+        val cols = state.config.width
+        val botCells = piece.occupiedCells()
+        val botColumns = botCells.map { it.x }.toSet()
+        val botTopY = botCells.minOfOrNull { it.y } ?: piece.y
+
+        val liveGrid = Array(rows) { r ->
+            BooleanArray(cols) { c -> state.grid[r][c] != null }
+        }
+        val staticGrid = Array(rows) { r -> liveGrid[r].clone() }
+
+        for ((otherId, otherPiece) in state.activePieces) {
+            if (otherId == botPlayerId || state.isPlayerEliminated(otherId)) continue
+            for (cell in otherPiece.occupiedCells()) {
+                if (cell.y in 0 until rows && cell.x in 0 until cols) {
+                    liveGrid[cell.y][cell.x] = true
+                    if (cell.x in botColumns && cell.y >= botTopY) {
+                        return true
+                    }
+                }
+            }
+        }
+
+        var liveDropY = piece.y
+        while (canOccupy(liveGrid, piece, piece.x, liveDropY + 1, piece.rotation, rows, cols)) {
+            liveDropY++
+        }
+        var staticDropY = piece.y
+        while (canOccupy(staticGrid, piece, piece.x, staticDropY + 1, piece.rotation, rows, cols)) {
+            staticDropY++
+        }
+
+        return liveDropY < staticDropY || liveDropY < expectedDropY
     }
 
     private fun bestPlacementScore(
