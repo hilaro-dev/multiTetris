@@ -11,15 +11,22 @@ import com.multitetris.network.GameSessionController
 import com.multitetris.network.LocalSimulationSessionController
 import com.multitetris.network.NetworkSessionState
 import com.multitetris.network.social.FirebaseSocialManager
+import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.SocialUiState
+import com.multitetris.network.webrtc.MultiplayerSessionManager
+import com.multitetris.network.webrtc.WebRtcSessionController
+import com.multitetris.network.webrtc.WebRtcSignalState
 import com.multitetris.ui.skin.ClassicSkinRenderer
 import com.multitetris.ui.skin.NeonCyberSkinRenderer
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class MultiTetrisUiState(
     val selectedMode: GameMode = GameMode.CO_OP,
@@ -29,14 +36,19 @@ data class MultiTetrisUiState(
     ),
     val gameState: GameState = GameState(),
     val networkState: NetworkSessionState = NetworkSessionState(),
-    val socialState: SocialUiState = SocialUiState()
+    val socialState: SocialUiState = SocialUiState(),
+    val webRtcSignalState: WebRtcSignalState = WebRtcSignalState.Idle,
+    val isMultiplayerSession: Boolean = false
 ) {
     val controlledPlayerId: Int get() = networkState.controlledPlayerId
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class GameViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val sessionController: GameSessionController = LocalSimulationSessionController()
+    private val localSessionController = LocalSimulationSessionController()
+    private val webRtcSessionController: WebRtcSessionController =
+        MultiplayerSessionManager.getInstance(application.applicationContext)
     private val socialManager = FirebaseSocialManager(application.applicationContext)
 
     private val _selectedMode = MutableStateFlow(GameMode.CO_OP)
@@ -46,19 +58,59 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             2 to NeonCyberSkinRenderer.SKIN_ID
         )
     )
+    private val _isMultiplayerSession = MutableStateFlow(false)
+    private var connectedMatchId: String? = null
+
+    private val activeGameStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
+        if (isMultiplayer) webRtcSessionController.gameState else localSessionController.gameState
+    }
+
+    private val activeSessionStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
+        if (isMultiplayer) webRtcSessionController.sessionState else localSessionController.sessionState
+    }
 
     init {
         socialManager.initialize(defaultSkinId = ClassicSkinRenderer.SKIN_ID)
+
+        // Automatically start WebRTC P2P signaling when Stage 2 matchmaking finds a match
+        viewModelScope.launch {
+            socialManager.socialState.collect { social ->
+                val matchState = social.matchmakingState
+                if (matchState is MatchmakingState.MatchFound) {
+                    val room = matchState.room
+                    if (connectedMatchId != room.matchId) {
+                        connectedMatchId = room.matchId
+                        localSessionController.stop()
+                        _isMultiplayerSession.value = true
+                        webRtcSessionController.connectRoom(room, social.userProfile)
+                    }
+                } else if (connectedMatchId != null) {
+                    connectedMatchId = null
+                }
+            }
+        }
     }
 
     val uiState: StateFlow<MultiTetrisUiState> = combine(
         _selectedMode,
         _selectedSkins,
-        sessionController.gameState,
-        sessionController.sessionState,
-        socialManager.socialState
-    ) { mode, skins, game, network, social ->
-        val syncedSkins = if (social.userProfile.selectedSkinId.isNotBlank() &&
+        activeGameStateFlow,
+        activeSessionStateFlow,
+        socialManager.socialState,
+        webRtcSessionController.signalState,
+        _isMultiplayerSession
+    ) { values ->
+        val mode = values[0] as GameMode
+        @Suppress("UNCHECKED_CAST")
+        val skins = values[1] as Map<Int, String>
+        val game = values[2] as GameState
+        val network = values[3] as NetworkSessionState
+        val social = values[4] as SocialUiState
+        val signal = values[5] as WebRtcSignalState
+        val isMultiplayer = values[6] as Boolean
+
+        val syncedSkins = if (!isMultiplayer &&
+            social.userProfile.selectedSkinId.isNotBlank() &&
             skins[1] != social.userProfile.selectedSkinId &&
             game.activePieces.isEmpty()
         ) {
@@ -72,7 +124,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             selectedSkins = syncedSkins,
             gameState = game,
             networkState = network,
-            socialState = social
+            socialState = social,
+            webRtcSignalState = signal,
+            isMultiplayerSession = isMultiplayer
         )
     }.stateIn(
         scope = viewModelScope,
@@ -80,7 +134,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = MultiTetrisUiState()
     )
 
-    // --- Stage 1 Local Simulation & Game Actions ---
+    private fun currentController(): GameSessionController {
+        return if (_isMultiplayerSession.value) webRtcSessionController else localSessionController
+    }
+
+    // --- Stage 1 Local Simulation & Shared Gameplay Actions ---
 
     fun setGameMode(mode: GameMode) {
         _selectedMode.value = mode
@@ -90,14 +148,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _selectedSkins.update { current ->
             current.toMutableMap().apply { put(playerId, skinId) }
         }
-        sessionController.setPlayerSkin(playerId, skinId)
+        currentController().setPlayerSkin(playerId, skinId)
         if (playerId == 1) {
             socialManager.updateSelectedSkin(skinId)
         }
     }
 
     fun startLocal2PGame() {
-        sessionController.startSession(
+        webRtcSessionController.stop()
+        connectedMatchId = null
+        _isMultiplayerSession.value = false
+        localSessionController.startSession(
             mode = _selectedMode.value,
             playerSkins = uiState.value.selectedSkins,
             config = BoardConfig(width = 10, height = 20, playerCount = 2)
@@ -105,36 +166,48 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun restartGame() {
-        startLocal2PGame()
+        if (_isMultiplayerSession.value) {
+            webRtcSessionController.requestRematch()
+        } else {
+            startLocal2PGame()
+        }
     }
 
     fun stopGameLoop() {
-        sessionController.stop()
+        localSessionController.stop()
+        if (_isMultiplayerSession.value) {
+            webRtcSessionController.stop()
+            _isMultiplayerSession.value = false
+            connectedMatchId = null
+            socialManager.cancelSearch()
+        }
     }
 
     fun switchControlFocus() {
+        if (_isMultiplayerSession.value) return
         val currentId = uiState.value.controlledPlayerId
         val playerIds = uiState.value.gameState.config.spawnZones.map { it.playerId }
         if (playerIds.isEmpty()) return
         val currentIndex = playerIds.indexOf(currentId)
         val nextId = playerIds[(currentIndex + 1) % playerIds.size]
-        sessionController.switchControlledPlayer(nextId)
+        localSessionController.switchControlledPlayer(nextId)
     }
 
     fun selectControlPlayer(playerId: Int) {
-        sessionController.switchControlledPlayer(playerId)
+        if (_isMultiplayerSession.value) return
+        localSessionController.switchControlledPlayer(playerId)
     }
 
     fun onPlayerAction(action: PlayerAction) {
         val targetPlayerId = uiState.value.controlledPlayerId
-        sessionController.dispatchAction(targetPlayerId, action)
+        currentController().dispatchAction(targetPlayerId, action)
     }
 
     fun togglePause() {
-        sessionController.togglePause()
+        currentController().togglePause()
     }
 
-    // --- Stage 2 Friends, Identity & Automatic Matchmaking ---
+    // --- Stage 2 & 3 Social, Matchmaking & WebRTC Lifecycle ---
 
     fun updateNickname(newNickname: String) {
         socialManager.updateNickname(newNickname)
@@ -157,12 +230,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancelPlayTogetherSearch() {
+        webRtcSessionController.stop()
+        _isMultiplayerSession.value = false
+        connectedMatchId = null
         socialManager.cancelSearch()
     }
 
     override fun onCleared() {
         super.onCleared()
-        sessionController.stop()
+        localSessionController.stop()
+        webRtcSessionController.stop()
         socialManager.shutdown()
     }
 }

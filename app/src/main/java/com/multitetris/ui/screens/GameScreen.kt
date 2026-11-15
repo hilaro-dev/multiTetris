@@ -62,7 +62,9 @@ import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
 import com.multitetris.game.PlayerAction
 import com.multitetris.game.TetrominoType
+import com.multitetris.network.ConnectionStatus
 import com.multitetris.network.NetworkSessionState
+import com.multitetris.network.SessionMode
 import com.multitetris.ui.skin.PlayerPalette
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
@@ -98,9 +100,10 @@ fun GameScreen(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top bar: Back, Focus Toggle Button, Pause, Restart
+        // Top bar: Back, Focus Toggle / P2P Role Badge, Pause, Restart
         TopControlBar(
             controlledPlayerId = controlledPlayerId,
+            sessionMode = networkState.sessionMode,
             focusAccent = focusAccent,
             isPaused = gameState.isPaused,
             onBack = onExitToHome,
@@ -192,15 +195,15 @@ fun GameScreen(
                 }
             }
 
-            if (gameState.isPaused && !gameState.isGameOver) {
+            if (networkState.status == ConnectionStatus.DISCONNECTED) {
+                DisconnectedOverlay(onReturnHome = onExitToHome)
+            } else if (gameState.isPaused && !gameState.isGameOver) {
                 PauseOverlay(
                     onResume = onTogglePause,
                     onRestart = onRestart,
                     onExit = onExitToHome
                 )
-            }
-
-            if (gameState.isGameOver) {
+            } else if (gameState.isGameOver) {
                 GameOverOverlay(
                     gameState = gameState,
                     onPlayAgain = onRestart,
@@ -215,7 +218,9 @@ fun GameScreen(
         TouchControlsDeck(
             controlledPlayerId = controlledPlayerId,
             focusAccent = focusAccent,
-            enabled = !gameState.isPaused && !gameState.isGameOver,
+            enabled = !gameState.isPaused &&
+                !gameState.isGameOver &&
+                networkState.status != ConnectionStatus.DISCONNECTED,
             onAction = onAction
         )
     }
@@ -224,6 +229,7 @@ fun GameScreen(
 @Composable
 private fun TopControlBar(
     controlledPlayerId: Int,
+    sessionMode: SessionMode,
     focusAccent: Color,
     isPaused: Boolean,
     onBack: () -> Unit,
@@ -231,6 +237,7 @@ private fun TopControlBar(
     onTogglePause: () -> Unit,
     onRestart: () -> Unit
 ) {
+    val isLocalMode = sessionMode == SessionMode.LOCAL_SIMULATION
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -247,11 +254,13 @@ private fun TopControlBar(
             )
         }
 
-        // Prominent Control Focus Toggle Button
+        // Control Focus Toggle (Local 2P) or P2P Live Role Badge
         Surface(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
-                .clickable(onClick = onSwitchFocus),
+                .then(
+                    if (isLocalMode) Modifier.clickable(onClick = onSwitchFocus) else Modifier
+                ),
             shape = RoundedCornerShape(50),
             color = focusAccent.copy(alpha = 0.18f),
             border = BorderStroke(1.5.dp, focusAccent)
@@ -261,48 +270,63 @@ private fun TopControlBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.SwapHoriz,
-                    contentDescription = "Switch Player Focus",
-                    tint = focusAccent,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "CONTROL: P$controlledPlayerId",
-                    color = TextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.5.sp
-                )
-                Text(
-                    text = "(TAP)",
-                    color = focusAccent,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (isLocalMode) {
+                    Icon(
+                        imageVector = Icons.Rounded.SwapHoriz,
+                        contentDescription = "Switch Player Focus",
+                        tint = focusAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "CONTROL: P$controlledPlayerId",
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = "(TAP)",
+                        color = focusAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    val roleTag = if (sessionMode == SessionMode.HOST) "P1 HOST" else "P2 GUEST"
+                    Text(
+                        text = "P2P LIVE • $roleTag",
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
             }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = onTogglePause,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                    contentDescription = if (isPaused) "Resume" else "Pause",
-                    tint = TextPrimary
-                )
-            }
-            IconButton(
-                onClick = onRestart,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = "Restart",
-                    tint = TextPrimary
-                )
+            if (isLocalMode || sessionMode == SessionMode.HOST) {
+                IconButton(
+                    onClick = onTogglePause,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                        contentDescription = if (isPaused) "Resume" else "Pause",
+                        tint = TextPrimary
+                    )
+                }
+                IconButton(
+                    onClick = onRestart,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Restart",
+                        tint = TextPrimary
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.width(40.dp))
             }
         }
     }
@@ -836,6 +860,31 @@ private fun GameOverOverlay(
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
             Text("Back to Home", color = TextPrimary)
+        }
+    }
+}
+
+@Composable
+private fun DisconnectedOverlay(
+    onReturnHome: () -> Unit
+) {
+    OverlayCard(title = "Opponent Disconnected", titleColor = ElectricGold) {
+        Text(
+            text = "The WebRTC peer connection was closed or your opponent left the match.",
+            color = TextSecondary,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(14.dp))
+        Button(
+            onClick = onReturnHome,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CyberCyan,
+                contentColor = ObsidianBg
+            )
+        ) {
+            Text("Return to Home", fontWeight = FontWeight.ExtraBold)
         }
     }
 }

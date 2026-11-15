@@ -21,6 +21,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Hub
+import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +47,7 @@ import com.multitetris.game.GameMode
 import com.multitetris.game.TetrominoType
 import com.multitetris.network.social.MatchRole
 import com.multitetris.network.social.MatchRoom
+import com.multitetris.network.webrtc.WebRtcSignalState
 import com.multitetris.ui.skin.PlayerPalette
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
@@ -58,6 +63,7 @@ import com.multitetris.ui.theme.TextSecondary
 @Composable
 fun MatchLobbyScreen(
     room: MatchRoom,
+    signalState: WebRtcSignalState,
     onCancelLobby: () -> Unit
 ) {
     val modeAccent = if (room.mode == GameMode.VERSUS) NeonMagenta else CyberCyan
@@ -139,8 +145,15 @@ fun MatchLobbyScreen(
                         tint = ElectricGold,
                         modifier = Modifier.size(16.dp)
                     )
+                    val statusMessage = when (signalState) {
+                        is WebRtcSignalState.Connecting -> signalState.statusText
+                        is WebRtcSignalState.Connected -> "WebRTC DataChannel OPEN! Launching..."
+                        is WebRtcSignalState.TimeoutError -> "Direct P2P connection failed"
+                        is WebRtcSignalState.Disconnected -> signalState.reason
+                        WebRtcSignalState.Idle -> "Preparing WebRTC peer connection..."
+                    }
                     Text(
-                        text = "Signaling Room Ready for Stage 3 WebRTC",
+                        text = statusMessage,
                         color = TextSecondary,
                         fontSize = 12.sp
                     )
@@ -179,7 +192,7 @@ fun MatchLobbyScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "MATCH ROOM METADATA",
+                            text = "WEBRTC P2P SIGNALING",
                             color = TextSecondary,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
@@ -192,7 +205,7 @@ fun MatchLobbyScreen(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "Firebase State: ${room.state}",
+                            text = "Channel: tetris-sync • ICE: STUN + TURN Relay",
                             color = ElectricGold,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -223,6 +236,46 @@ fun MatchLobbyScreen(
                 )
             }
         }
+    }
+
+    if (signalState is WebRtcSignalState.TimeoutError) {
+        AlertDialog(
+            onDismissRequest = onCancelLobby,
+            containerColor = SlateSurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.WifiOff,
+                    contentDescription = null,
+                    tint = ElectricGold,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Connection Blocked",
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Text(
+                    text = signalState.message,
+                    textAlign = TextAlign.Center
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = onCancelLobby,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CyberCyan,
+                        contentColor = ObsidianBg
+                    )
+                ) {
+                    Text("Back to Lobby", fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        )
     }
 }
 

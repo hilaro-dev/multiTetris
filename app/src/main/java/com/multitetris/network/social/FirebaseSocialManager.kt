@@ -61,6 +61,8 @@ class FirebaseSocialManager(
     private var savedFriendsCache: List<SavedFriend> = emptyList()
 
     private var activeMatchIdAsHost: String? = null
+    private var isCreatingMatchAsHost = false
+    private var isAcceptingInviteAsGuest = false
 
     fun initialize(defaultSkinId: String = "classic") {
         if (!initialized.compareAndSet(false, true)) return
@@ -267,54 +269,67 @@ class FirebaseSocialManager(
         matchId: String,
         expectedMode: GameMode
     ) {
-        val matchSnap = runCatching {
-            db.getReference("matches").child(matchId).get().await()
-        }.getOrNull() ?: return
-
-        if (!matchSnap.exists()) return
-        val hostUid = matchSnap.child("hostUid").getValue(String::class.java) ?: return
-        val guestUid = matchSnap.child("guestUid").getValue(String::class.java) ?: return
-        if (guestUid != myUid) return
-
-        val modeRaw = matchSnap.child("mode").getValue(String::class.java)
-        val mode = runCatching { GameMode.valueOf(modeRaw.orEmpty()) }.getOrNull() ?: return
-        if (mode != expectedMode) return
-
-        val hostNickname = matchSnap.child("hostNickname").getValue(String::class.java)
-            ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.nickname
-            ?: "Host"
-        val hostSkinId = matchSnap.child("hostSkinId").getValue(String::class.java) ?: "classic"
-        val myProfile = _socialState.value.userProfile
-        val guestNickname = matchSnap.child("guestNickname").getValue(String::class.java)
-            ?: myProfile.nickname
-        val guestSkinId = matchSnap.child("guestSkinId").getValue(String::class.java)
-            ?: myProfile.selectedSkinId
-        val matchState = matchSnap.child("state").getValue(String::class.java) ?: "signaling"
-        val createdAt = matchSnap.child("createdAt").getValue(Long::class.java) ?: System.currentTimeMillis()
-
-        // Acknowledge invite and transition presence back to online/in-lobby
-        runCatching {
-            db.getReference("invites").child(myUid).removeValue().await()
-            writePresence(db.getReference("presence").child(myUid), "online", null)
+        synchronized(pairingLock) {
+            if (isAcceptingInviteAsGuest || _socialState.value.matchmakingState !is MatchmakingState.Searching) {
+                return
+            }
+            isAcceptingInviteAsGuest = true
         }
 
-        val room = MatchRoom(
-            matchId = matchId,
-            hostUid = hostUid,
-            hostNickname = hostNickname,
-            hostSkinId = hostSkinId,
-            guestUid = myUid,
-            guestNickname = guestNickname,
-            guestSkinId = guestSkinId,
-            mode = mode,
-            state = matchState,
-            createdAtMillis = createdAt,
-            myRole = MatchRole.GUEST
-        )
+        try {
+            val matchSnap = runCatching {
+                db.getReference("matches").child(matchId).get().await()
+            }.getOrNull() ?: return
 
-        synchronized(pairingLock) {
-            if (_socialState.value.matchmakingState is MatchmakingState.Searching) {
-                _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(room)) }
+            if (!matchSnap.exists()) return
+            val hostUid = matchSnap.child("hostUid").getValue(String::class.java) ?: return
+            val guestUid = matchSnap.child("guestUid").getValue(String::class.java) ?: return
+            if (guestUid != myUid) return
+
+            val modeRaw = matchSnap.child("mode").getValue(String::class.java)
+            val mode = runCatching { GameMode.valueOf(modeRaw.orEmpty()) }.getOrNull() ?: return
+            if (mode != expectedMode) return
+
+            val hostNickname = matchSnap.child("hostNickname").getValue(String::class.java)
+                ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.nickname
+                ?: "Host"
+            val hostSkinId = matchSnap.child("hostSkinId").getValue(String::class.java) ?: "classic"
+            val myProfile = _socialState.value.userProfile
+            val guestNickname = matchSnap.child("guestNickname").getValue(String::class.java)
+                ?: myProfile.nickname
+            val guestSkinId = matchSnap.child("guestSkinId").getValue(String::class.java)
+                ?: myProfile.selectedSkinId
+            val matchState = matchSnap.child("state").getValue(String::class.java) ?: "signaling"
+            val createdAt = matchSnap.child("createdAt").getValue(Long::class.java) ?: System.currentTimeMillis()
+
+            // Acknowledge invite and transition presence back to online/in-lobby
+            runCatching {
+                db.getReference("invites").child(myUid).removeValue().await()
+                writePresence(db.getReference("presence").child(myUid), "online", null)
+            }
+
+            val room = MatchRoom(
+                matchId = matchId,
+                hostUid = hostUid,
+                hostNickname = hostNickname,
+                hostSkinId = hostSkinId,
+                guestUid = myUid,
+                guestNickname = guestNickname,
+                guestSkinId = guestSkinId,
+                mode = mode,
+                state = matchState,
+                createdAtMillis = createdAt,
+                myRole = MatchRole.GUEST
+            )
+
+            synchronized(pairingLock) {
+                if (_socialState.value.matchmakingState is MatchmakingState.Searching) {
+                    _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(room)) }
+                }
+            }
+        } finally {
+            synchronized(pairingLock) {
+                isAcceptingInviteAsGuest = false
             }
         }
     }
@@ -585,8 +600,12 @@ class FirebaseSocialManager(
             return
         }
 
-        _socialState.update {
-            it.copy(matchmakingState = MatchmakingState.Searching(mode = mode))
+        synchronized(pairingLock) {
+            isCreatingMatchAsHost = false
+            isAcceptingInviteAsGuest = false
+            _socialState.update {
+                it.copy(matchmakingState = MatchmakingState.Searching(mode = mode))
+            }
         }
 
         writePresence(db.getReference("presence").child(myUid), "searching", mode)
@@ -598,6 +617,8 @@ class FirebaseSocialManager(
         val myUid = _socialState.value.userProfile.uid
 
         synchronized(pairingLock) {
+            isCreatingMatchAsHost = false
+            isAcceptingInviteAsGuest = false
             _socialState.update { it.copy(matchmakingState = MatchmakingState.Idle) }
         }
 
@@ -630,8 +651,11 @@ class FirebaseSocialManager(
         } ?: return
 
         synchronized(pairingLock) {
-            if (_socialState.value.matchmakingState !is MatchmakingState.Searching) return
+            if (isCreatingMatchAsHost || _socialState.value.matchmakingState !is MatchmakingState.Searching) {
+                return
+            }
             val matchId = "m_${myUid.take(8)}_${candidate.friend.uid.take(8)}_${System.currentTimeMillis()}"
+            isCreatingMatchAsHost = true
             activeMatchIdAsHost = matchId
 
             val room = MatchRoom(
@@ -648,9 +672,6 @@ class FirebaseSocialManager(
                 myRole = MatchRole.HOST
             )
 
-            // Transition optimistically under lock to prevent creating duplicate rooms
-            _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(room)) }
-
             scope.launch {
                 publishHostMatchAndInvite(db, room)
             }
@@ -662,6 +683,7 @@ class FirebaseSocialManager(
             val matchRef = db.getReference("matches").child(room.matchId)
             matchRef.onDisconnect().removeValue()
 
+            // Write hostUid & guestUid BEFORE signaling starts and BEFORE emitting MatchFound
             val matchPayload = mapOf(
                 "matchId" to room.matchId,
                 "hostUid" to room.hostUid,
@@ -674,7 +696,7 @@ class FirebaseSocialManager(
                 "state" to "signaling",
                 "createdAt" to ServerValue.TIMESTAMP
             )
-            matchRef.setValue(matchPayload).await()
+            matchRef.updateChildren(matchPayload).await()
 
             val invitePayload = mapOf(
                 "matchId" to room.matchId,
@@ -685,8 +707,20 @@ class FirebaseSocialManager(
             db.getReference("invites").child(room.guestUid).setValue(invitePayload).await()
 
             writePresence(db.getReference("presence").child(room.hostUid), "online", null)
+
+            synchronized(pairingLock) {
+                isCreatingMatchAsHost = false
+                if (_socialState.value.matchmakingState is MatchmakingState.Searching &&
+                    activeMatchIdAsHost == room.matchId
+                ) {
+                    _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(room)) }
+                }
+            }
         }.onFailure { error ->
-            activeMatchIdAsHost = null
+            synchronized(pairingLock) {
+                isCreatingMatchAsHost = false
+                activeMatchIdAsHost = null
+            }
             _socialState.update {
                 it.copy(
                     matchmakingState = MatchmakingState.Error(

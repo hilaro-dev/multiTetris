@@ -74,6 +74,9 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.serialization.json)
 
+    // WebRTC (DataChannel P2P Sync)
+    implementation(libs.stream.webrtc.android)
+
     // Testing & Debug
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

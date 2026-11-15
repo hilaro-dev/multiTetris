@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.multitetris.network.social.MatchmakingState
+import com.multitetris.network.webrtc.WebRtcSignalState
 import com.multitetris.ui.screens.GameScreen
 import com.multitetris.ui.screens.HomeScreen
 import com.multitetris.ui.screens.MatchLobbyScreen
@@ -47,14 +48,26 @@ fun MultiTetrisApp(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val matchmakingState = uiState.socialState.matchmakingState
+    val signalState = uiState.webRtcSignalState
 
-    LaunchedEffect(matchmakingState, currentRoute) {
-        if (matchmakingState is MatchmakingState.MatchFound && currentRoute != Routes.LOBBY) {
-            navController.navigate(Routes.LOBBY) {
-                launchSingleTop = true
+    LaunchedEffect(matchmakingState, signalState, currentRoute) {
+        when {
+            currentRoute == Routes.HOME && matchmakingState is MatchmakingState.MatchFound -> {
+                navController.navigate(Routes.LOBBY) {
+                    launchSingleTop = true
+                }
             }
-        } else if (matchmakingState !is MatchmakingState.MatchFound && currentRoute == Routes.LOBBY) {
-            navController.popBackStack(Routes.HOME, inclusive = false)
+
+            currentRoute == Routes.LOBBY && signalState is WebRtcSignalState.Connected -> {
+                navController.navigate(Routes.GAME) {
+                    popUpTo(Routes.HOME) { inclusive = false }
+                    launchSingleTop = true
+                }
+            }
+
+            currentRoute == Routes.LOBBY && matchmakingState !is MatchmakingState.MatchFound -> {
+                navController.popBackStack(Routes.HOME, inclusive = false)
+            }
         }
     }
 
@@ -87,6 +100,7 @@ fun MultiTetrisApp(
             if (foundRoom != null) {
                 MatchLobbyScreen(
                     room = foundRoom,
+                    signalState = signalState,
                     onCancelLobby = {
                         gameViewModel.cancelPlayTogetherSearch()
                         navController.popBackStack(Routes.HOME, inclusive = false)
@@ -106,7 +120,7 @@ fun MultiTetrisApp(
                 onRestart = gameViewModel::restartGame,
                 onExitToHome = {
                     gameViewModel.stopGameLoop()
-                    navController.popBackStack()
+                    navController.popBackStack(Routes.HOME, inclusive = false)
                 }
             )
         }
