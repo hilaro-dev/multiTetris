@@ -50,6 +50,7 @@ import com.multitetris.network.webrtc.WebRtcSignalState
 import com.multitetris.ui.screens.GameScreen
 import com.multitetris.ui.screens.HomeScreen
 import com.multitetris.ui.screens.MatchLobbyScreen
+import com.multitetris.ui.screens.ShopScreen
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElevatedCard
 import com.multitetris.ui.theme.MultiTetrisTheme
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
 
 private object Routes {
     const val HOME = "home"
+    const val SHOP = "shop"
     const val GAME = "game"
     const val LOBBY = "lobby"
 }
@@ -99,7 +101,8 @@ fun MultiTetrisApp(
 
     LaunchedEffect(matchmakingState, signalState, currentRoute) {
         when {
-            currentRoute == Routes.HOME && matchmakingState is MatchmakingState.MatchFound -> {
+            (currentRoute == Routes.HOME || currentRoute == Routes.SHOP) &&
+                matchmakingState is MatchmakingState.MatchFound -> {
                 navController.navigate(Routes.LOBBY) {
                     launchSingleTop = true
                 }
@@ -130,8 +133,11 @@ fun MultiTetrisApp(
                     socialState = uiState.socialState,
                     economyState = uiState.economyState,
                     onSelectMode = gameViewModel::setGameMode,
-                    onSelectSkin = gameViewModel::setPlayerSkin,
-                    onPurchaseSkin = gameViewModel::purchaseAndEquipSkin,
+                    onOpenShop = {
+                        navController.navigate(Routes.SHOP) {
+                            launchSingleTop = true
+                        }
+                    },
                     onClaimMission = gameViewModel::claimDailyMission,
                     onRefreshMissions = gameViewModel::refreshDailyMissions,
                     onUpdateNickname = gameViewModel::updateNickname,
@@ -146,6 +152,17 @@ fun MultiTetrisApp(
                         gameViewModel.startLocal2PGame()
                         navController.navigate(Routes.GAME)
                     }
+                )
+            }
+
+            composable(Routes.SHOP) {
+                ShopScreen(
+                    selectedSkins = uiState.selectedSkins,
+                    coinBalance = uiState.economyState.coinBalance,
+                    unlockedSkins = uiState.economyState.unlockedSkins,
+                    onEquipSkin = gameViewModel::setPlayerSkin,
+                    onPurchaseSkin = gameViewModel::purchaseAndEquipSkin,
+                    onBack = { navController.popBackStack() }
                 )
             }
 

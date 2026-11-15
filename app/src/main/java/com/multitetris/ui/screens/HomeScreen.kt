@@ -13,16 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.EmojiEvents
@@ -31,6 +29,7 @@ import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -40,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,8 +52,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.economy.EconomyUiState
@@ -63,7 +65,7 @@ import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
-import com.multitetris.ui.skin.PlayerPalette
+import com.multitetris.ui.skin.SkinCatalog
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
@@ -82,8 +84,7 @@ fun HomeScreen(
     socialState: SocialUiState,
     economyState: EconomyUiState,
     onSelectMode: (GameMode) -> Unit,
-    onSelectSkin: (playerId: Int, skinId: String) -> Unit,
-    onPurchaseSkin: (playerId: Int, skinId: String, price: Int) -> Unit,
+    onOpenShop: () -> Unit,
     onClaimMission: (String) -> Unit,
     onRefreshMissions: () -> Unit,
     onUpdateNickname: (String) -> Unit,
@@ -97,11 +98,13 @@ fun HomeScreen(
     onStartLocalTest: () -> Unit
 ) {
     var showFriendsSheet by remember { mutableStateOf(false) }
-    var showArmorySheet by remember { mutableStateOf(false) }
     var showMissionsSheet by remember { mutableStateOf(false) }
 
     val onlineFriendsCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
     val searchingFriendsCount = socialState.friends.count { it.state == PresenceState.SEARCHING }
+    val friendsBadgeCount = socialState.pendingFriendRequests.size + socialState.incomingRoomInvites.size
+    val equippedP1SkinId = selectedSkins[1] ?: "classic"
+    val unlockedCount = economyState.unlockedSkins.size.coerceAtMost(SkinCatalog.items.size)
 
     Box(
         modifier = Modifier
@@ -117,192 +120,53 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 20.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Identity & Friends Drawer trigger bar
-            TopSocialBar(
+            // Minimalist Top Bar: Profile pill + Coin Balance + Missions + Friends
+            HomeTopBar(
                 nickname = socialState.userProfile.nickname,
-                friendCode = socialState.userProfile.friendCode,
+                equippedSkinId = equippedP1SkinId,
                 isConnected = socialState.isFirebaseConnected,
-                friendCount = socialState.friends.size,
-                onlineFriendsCount = onlineFriendsCount,
-                pendingRequestCount = socialState.pendingFriendRequests.size,
-                onOpenFriends = { showFriendsSheet = true }
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Coin Balance & Daily Missions bar
-            EconomyAndMissionsBar(
                 coinBalance = economyState.coinBalance,
-                claimableMissionCount = economyState.claimableMissionCount,
+                hasClaimableMissions = economyState.claimableMissionCount > 0,
+                friendsBadgeCount = friendsBadgeCount,
+                onOpenProfile = { showFriendsSheet = true },
+                onOpenShop = onOpenShop,
                 onOpenMissions = {
                     onRefreshMissions()
                     showMissionsSheet = true
-                }
+                },
+                onOpenFriends = { showFriendsSheet = true }
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.weight(1f))
 
-            // App Title
+            // Center Hero: Bold MultiTetris title + compact CO-OP / VERSUS segmented toggle
             Text(
                 text = "MultiTetris",
-                fontSize = 38.sp,
+                fontSize = 42.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = TextPrimary,
-                letterSpacing = (-0.5).sp
+                letterSpacing = (-0.8).sp
             )
             Text(
-                text = "Shared 10×20 Board • Live Friend Matchmaking",
+                text = "Shared 10×20 Arena",
                 fontSize = 13.sp,
                 color = TextSecondary,
-                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Mode Selector Section
-            SectionLabel(text = "GAME MODE")
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ModeSelectorCard(
-                    modifier = Modifier.weight(1f),
-                    title = GameMode.CO_OP.label,
-                    subtitle = "Shared score & level",
-                    selected = selectedMode == GameMode.CO_OP,
-                    accent = CyberCyan,
-                    icon = Icons.Rounded.Groups,
-                    onClick = { onSelectMode(GameMode.CO_OP) }
-                )
-                ModeSelectorCard(
-                    modifier = Modifier.weight(1f),
-                    title = GameMode.VERSUS.label,
-                    subtitle = "Sabotage Push + Top-Out",
-                    selected = selectedMode == GameMode.VERSUS,
-                    accent = NeonMagenta,
-                    icon = Icons.Rounded.Bolt,
-                    onClick = { onSelectMode(GameMode.VERSUS) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Mode rules card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = SlateSurface),
-                border = BorderStroke(1.dp, SubtleBorder),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    val isVersus = selectedMode == GameMode.VERSUS
-                    Text(
-                        text = if (isVersus) "Versus Rules" else "Co-op Rules",
-                        color = if (isVersus) NeonMagenta else CyberCyan,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = if (isVersus) {
-                            "Player 1 drops at Col 2 (zone 1–4) and Player 2 drops at Col 6 (zone 5–8). Clearing a line triggers a 0.5s Sabotage Push speed burst on your opponent. First spawn zone to overflow loses!"
-                        } else {
-                            "Both players share one score, line counter, and escalating level speed on the same 10×20 grid. Colliding mid-air pauses the upper piece until the lower piece moves or locks."
-                        },
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Block Skins Armory Section
-            SectionLabel(text = "BLOCK SKINS ARMORY")
-            Spacer(modifier = Modifier.height(8.dp))
-
-            val p1Skin = SkinRegistry.resolve(selectedSkins[1] ?: "classic")
-            val p2Skin = SkinRegistry.resolve(selectedSkins[2] ?: "neon_cyber")
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { showArmorySheet = true },
-                colors = CardDefaults.cardColors(containerColor = SlateSurface),
-                border = BorderStroke(1.2.dp, CyberCyan.copy(alpha = 0.45f)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        SkinMiniPreview(
-                            skinId = p1Skin.skinId,
-                            playerId = 1,
-                            modifier = Modifier.size(34.dp)
-                        )
-                        Column {
-                            Text(
-                                text = "Equipped: ${p1Skin.displayName}",
-                                color = TextPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "Local P2: ${p2Skin.displayName} • 6 Skins",
-                                color = TextSecondary,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = CyberCyan.copy(alpha = 0.16f),
-                        border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.7f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                tint = CyberCyan,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Skins Armory",
-                                color = CyberCyan,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(22.dp))
 
-            // Automatic "Play Together" Matchmaking Section
+            SegmentedModeToggle(
+                selectedMode = selectedMode,
+                onSelectMode = onSelectMode
+            )
+
+            Spacer(modifier = Modifier.weight(1.1f))
+
+            // Primary Action Area: Create Room, Secondary Shop, Subtle Local 2P Test
             val modeAccent = if (selectedMode == GameMode.VERSUS) NeonMagenta else CyberCyan
             when (val matchState = socialState.matchmakingState) {
                 is MatchmakingState.Searching -> {
@@ -336,7 +200,7 @@ fun HomeScreen(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Waiting for a saved friend to press PLAY in ${matchState.mode.label} • $searchingFriendsCount searching now",
+                                text = "Waiting for a saved friend • $searchingFriendsCount searching now",
                                 color = TextSecondary,
                                 fontSize = 11.sp,
                                 textAlign = TextAlign.Center
@@ -389,7 +253,7 @@ fun HomeScreen(
                         onClick = onCreateRoom,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(58.dp),
+                            .height(60.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = modeAccent,
@@ -413,7 +277,7 @@ fun HomeScreen(
                                 text = if (onlineFriendsCount > 0) {
                                     "Invite from $onlineFriendsCount online friend(s)"
                                 } else {
-                                    "Open Room Lobby & invite saved friends"
+                                    "Open Room Lobby & invite friends"
                                 },
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Medium
@@ -425,31 +289,48 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Secondary Stage 1 Local 2P Test Button
+            // Secondary Shop button
             OutlinedButton(
-                onClick = onStartLocalTest,
+                onClick = onOpenShop,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.2.dp, SubtleBorder)
+                border = BorderStroke(1.2.dp, CyberCyan.copy(alpha = 0.5f))
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.SportsEsports,
+                    imageVector = Icons.Rounded.Storefront,
                     contentDescription = null,
                     tint = CyberCyan,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(19.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Local 2P Test",
+                    text = "Shop • $unlockedCount/${SkinCatalog.items.size} Unlocked",
                     color = TextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Subtle Local 2P Test button at bottom
+            TextButton(onClick = onStartLocalTest) {
+                Icon(
+                    imageVector = Icons.Rounded.SportsEsports,
+                    contentDescription = null,
+                    tint = TextSecondary,
+                    modifier = Modifier.size(17.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Local 2P Test",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 
@@ -466,17 +347,6 @@ fun HomeScreen(
         )
     }
 
-    if (showArmorySheet) {
-        SkinsArmorySheet(
-            selectedSkins = selectedSkins,
-            coinBalance = economyState.coinBalance,
-            unlockedSkins = economyState.unlockedSkins,
-            onEquipSkin = onSelectSkin,
-            onPurchaseSkin = onPurchaseSkin,
-            onDismiss = { showArmorySheet = false }
-        )
-    }
-
     if (showMissionsSheet) {
         DailyMissionsSheet(
             coinBalance = economyState.coinBalance,
@@ -488,98 +358,16 @@ fun HomeScreen(
 }
 
 @Composable
-private fun EconomyAndMissionsBar(
-    coinBalance: Int,
-    claimableMissionCount: Int,
-    onOpenMissions: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = ElectricGold.copy(alpha = 0.14f),
-            border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.65f))
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.MonetizationOn,
-                    contentDescription = "Coin Balance",
-                    tint = ElectricGold,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "$coinBalance Coins",
-                    color = ElectricGold,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-        }
-
-        Surface(
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .clickable(onClick = onOpenMissions),
-            shape = RoundedCornerShape(50),
-            color = ElevatedCard,
-            border = BorderStroke(
-                width = 1.dp,
-                color = if (claimableMissionCount > 0) ElectricGold else SubtleBorder
-            )
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.EmojiEvents,
-                    contentDescription = "Daily Missions",
-                    tint = ElectricGold,
-                    modifier = Modifier.size(17.dp)
-                )
-                Text(
-                    text = "Missions",
-                    color = TextPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                if (claimableMissionCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(NeonMagenta),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = claimableMissionCount.coerceAtMost(9).toString(),
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TopSocialBar(
+private fun HomeTopBar(
     nickname: String,
-    friendCode: String,
+    equippedSkinId: String,
     isConnected: Boolean,
-    friendCount: Int,
-    onlineFriendsCount: Int,
-    pendingRequestCount: Int,
+    coinBalance: Int,
+    hasClaimableMissions: Boolean,
+    friendsBadgeCount: Int,
+    onOpenProfile: () -> Unit,
+    onOpenShop: () -> Unit,
+    onOpenMissions: () -> Unit,
     onOpenFriends: () -> Unit
 ) {
     Row(
@@ -587,149 +375,235 @@ private fun TopSocialBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // Compact Player Profile Pill
         Surface(
             modifier = Modifier
+                .weight(1f, fill = false)
                 .clip(RoundedCornerShape(50))
-                .clickable(onClick = onOpenFriends),
+                .clickable(onClick = onOpenProfile),
             shape = RoundedCornerShape(50),
             color = ElevatedCard,
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(if (isConnected) Color(0xFF2FE066) else ElectricGold)
-                )
-                Column {
-                    Text(
-                        text = nickname.ifBlank { "Player" },
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    SkinMiniPreview(
+                        skinId = equippedSkinId,
+                        playerId = 1,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(5.dp))
                     )
-                    Text(
-                        text = friendCode.ifBlank { "MT------" },
-                        color = CyberCyan,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.8.sp
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(if (isConnected) Color(0xFF2FE066) else ElectricGold)
                     )
                 }
+                Text(
+                    text = nickname.ifBlank { "Player" },
+                    color = TextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
 
-        Surface(
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .clickable(onClick = onOpenFriends),
-            shape = RoundedCornerShape(50),
-            color = CyberCyan.copy(alpha = 0.14f),
-            border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.7f))
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            // Clickable Coin Balance Badge
+            Surface(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onOpenShop),
+                shape = RoundedCornerShape(50),
+                color = ElectricGold.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, ElectricGold.copy(alpha = 0.65f))
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.People,
-                    contentDescription = "Friends",
-                    tint = CyberCyan,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = if (onlineFriendsCount > 0) {
-                        "Friends ($onlineFriendsCount/$friendCount)"
-                    } else {
-                        "Friends ($friendCount)"
-                    },
-                    color = TextPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                if (pendingRequestCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(NeonMagenta),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = pendingRequestCount.coerceAtMost(9).toString(),
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MonetizationOn,
+                        contentDescription = "Coins",
+                        tint = ElectricGold,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = coinBalance.toString(),
+                        color = ElectricGold,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             }
+
+            // Missions Icon Button with red notification dot when claimable
+            TopIconBadgeButton(
+                icon = Icons.Rounded.EmojiEvents,
+                contentDescription = "Daily Missions",
+                tint = ElectricGold,
+                showDot = hasClaimableMissions,
+                badgeCount = 0,
+                onClick = onOpenMissions
+            )
+
+            // Friends Icon Button with pending request/invite badge
+            TopIconBadgeButton(
+                icon = Icons.Rounded.People,
+                contentDescription = "Friends",
+                tint = CyberCyan,
+                showDot = false,
+                badgeCount = friendsBadgeCount,
+                onClick = onOpenFriends
+            )
         }
     }
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.fillMaxWidth(),
-        color = TextSecondary,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.4.sp
-    )
+private fun TopIconBadgeButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    showDot: Boolean,
+    badgeCount: Int,
+    onClick: () -> Unit
+) {
+    Box {
+        Surface(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick),
+            shape = CircleShape,
+            color = ElevatedCard,
+            border = BorderStroke(1.dp, SubtleBorder)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = contentDescription,
+                    tint = tint,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+        }
+
+        if (badgeCount > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 2.dp, y = (-2).dp)
+                    .size(17.dp)
+                    .clip(CircleShape)
+                    .background(NeonMagenta),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = badgeCount.coerceAtMost(9).toString(),
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        } else if (showDot) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 1.dp, y = (-1).dp)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFF3B5C))
+            )
+        }
+    }
 }
 
 @Composable
-private fun ModeSelectorCard(
+private fun SegmentedModeToggle(
+    selectedMode: GameMode,
+    onSelectMode: (GameMode) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = SlateSurface,
+        border = BorderStroke(1.dp, SubtleBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            SegmentedModeOption(
+                modifier = Modifier.weight(1f),
+                title = GameMode.CO_OP.label,
+                icon = Icons.Rounded.Groups,
+                selected = selectedMode == GameMode.CO_OP,
+                accent = CyberCyan,
+                onClick = { onSelectMode(GameMode.CO_OP) }
+            )
+            SegmentedModeOption(
+                modifier = Modifier.weight(1f),
+                title = GameMode.VERSUS.label,
+                icon = Icons.Rounded.Bolt,
+                selected = selectedMode == GameMode.VERSUS,
+                accent = NeonMagenta,
+                onClick = { onSelectMode(GameMode.VERSUS) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SegmentedModeOption(
     modifier: Modifier = Modifier,
     title: String,
-    subtitle: String,
+    icon: ImageVector,
     selected: Boolean,
     accent: Color,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit
 ) {
-    Card(
+    Surface(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) accent.copy(alpha = 0.14f) else SlateSurface
-        ),
-        border = BorderStroke(
-            width = if (selected) 2.dp else 1.dp,
-            color = if (selected) accent else SubtleBorder
-        )
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) accent.copy(alpha = 0.18f) else Color.Transparent,
+        border = if (selected) BorderStroke(1.2.dp, accent) else null
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        Row(
+            modifier = Modifier.padding(vertical = 12.dp, horizontal = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (selected) accent else TextSecondary,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(18.dp)
             )
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = title,
                 color = if (selected) TextPrimary else TextSecondary,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 16.sp
-            )
-            Text(
-                text = subtitle,
-                color = TextSecondary,
-                fontSize = 11.sp,
-                lineHeight = 14.sp
+                fontSize = 14.sp,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
             )
         }
     }
