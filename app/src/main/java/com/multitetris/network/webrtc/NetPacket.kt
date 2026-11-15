@@ -82,7 +82,9 @@ data class GameStatePacket(
     val topOutPlayerId: Int? = null,
     val statusMessage: String? = null,
     val isPaused: Boolean = false,
-    val playerSkins: Map<Int, String> = emptyMap()
+    val playerSkins: Map<Int, String> = emptyMap(),
+    val lastClearedRowIndices: List<Int> = emptyList(),
+    val lineClearEventId: Long = 0L
 ) : NetPacket {
 
     fun toClientGameState(
@@ -91,7 +93,8 @@ data class GameStatePacket(
     ): GameState {
         val height = grid.size.coerceAtLeast(4)
         val width = grid.firstOrNull()?.size?.coerceAtLeast(4) ?: 10
-        val config = BoardConfig(width = width, height = height, playerCount = 2)
+        val inferredPlayers = maxOf(2, activePieces.maxOfOrNull { it.playerId } ?: 2)
+        val config = BoardConfig(width = width, height = height, playerCount = inferredPlayers)
 
         val decodedGrid = grid.map { row ->
             row.map { packed -> GridCellCodec.decode(packed) }
@@ -127,7 +130,9 @@ data class GameStatePacket(
             isGameOver = isGameOver,
             winnerPlayerId = gameOverWinnerId,
             topOutPlayerId = topOutPlayerId,
-            statusMessage = statusMessage
+            statusMessage = statusMessage,
+            lastClearedRowIndices = lastClearedRowIndices,
+            lineClearEventId = lineClearEventId
         )
     }
 
@@ -162,7 +167,9 @@ data class GameStatePacket(
                 topOutPlayerId = state.topOutPlayerId,
                 statusMessage = state.statusMessage,
                 isPaused = state.isPaused,
-                playerSkins = state.playerSkins
+                playerSkins = state.playerSkins,
+                lastClearedRowIndices = state.lastClearedRowIndices,
+                lineClearEventId = state.lineClearEventId
             )
         }
     }
@@ -182,11 +189,19 @@ data class RematchRequestPacket(
 object GridCellCodec {
     private val skinToCode = mapOf(
         "classic" to 1,
-        "neon_cyber" to 2
+        "neon_cyber" to 2,
+        "golden_flex" to 3,
+        "obsidian_magma" to 4,
+        "hologram_glitch" to 5,
+        "pixel_crystal" to 6
     )
     private val codeToSkin = mapOf(
         1 to "classic",
-        2 to "neon_cyber"
+        2 to "neon_cyber",
+        3 to "golden_flex",
+        4 to "obsidian_magma",
+        5 to "hologram_glitch",
+        6 to "pixel_crystal"
     )
 
     fun encode(cell: LockedCell?): Int {

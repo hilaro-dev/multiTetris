@@ -1,6 +1,14 @@
 package com.multitetris.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -28,6 +36,8 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.RotateRight
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
@@ -45,6 +55,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +67,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -81,6 +96,8 @@ import com.multitetris.ui.theme.TextSecondary
 fun GameScreen(
     gameState: GameState,
     networkState: NetworkSessionState,
+    isMuted: Boolean = false,
+    onToggleMute: () -> Unit = {},
     onSwitchFocus: () -> Unit,
     onSelectFocusPlayer: (Int) -> Unit,
     onAction: (PlayerAction) -> Unit,
@@ -100,12 +117,14 @@ fun GameScreen(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top bar: Back, Focus Toggle / P2P Role Badge, Pause, Restart
+        // Top bar: Back, Focus Toggle / P2P Role Badge, Mute, Pause, Restart
         TopControlBar(
             controlledPlayerId = controlledPlayerId,
             sessionMode = networkState.sessionMode,
             focusAccent = focusAccent,
             isPaused = gameState.isPaused,
+            isMuted = isMuted,
+            onToggleMute = onToggleMute,
             onBack = onExitToHome,
             onSwitchFocus = onSwitchFocus,
             onTogglePause = onTogglePause,
@@ -232,6 +251,8 @@ private fun TopControlBar(
     sessionMode: SessionMode,
     focusAccent: Color,
     isPaused: Boolean,
+    isMuted: Boolean,
+    onToggleMute: () -> Unit,
     onBack: () -> Unit,
     onSwitchFocus: () -> Unit,
     onTogglePause: () -> Unit,
@@ -304,10 +325,20 @@ private fun TopControlBar(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onToggleMute,
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                    contentDescription = if (isMuted) "Unmute Sound" else "Mute Sound",
+                    tint = if (isMuted) TextSecondary else CyberCyan
+                )
+            }
             if (isLocalMode || sessionMode == SessionMode.HOST) {
                 IconButton(
                     onClick = onTogglePause,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(38.dp)
                 ) {
                     Icon(
                         imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
@@ -317,7 +348,7 @@ private fun TopControlBar(
                 }
                 IconButton(
                     onClick = onRestart,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(38.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Refresh,
@@ -325,8 +356,6 @@ private fun TopControlBar(
                         tint = TextPrimary
                     )
                 }
-            } else {
-                Spacer(modifier = Modifier.width(40.dp))
             }
         }
     }
@@ -538,6 +567,37 @@ fun TetrisBoardCanvas(
     sabotagedPlayers: Set<Int>,
     modifier: Modifier = Modifier
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "board_fx")
+    val animProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "skin_shimmer"
+    )
+    val sabotagePulse by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "sabotage_pulse"
+    )
+
+    val lineClearFlash = remember { Animatable(0f) }
+    LaunchedEffect(gameState.lineClearEventId) {
+        if (gameState.lineClearEventId > 0L && gameState.lastClearedRowIndices.isNotEmpty()) {
+            lineClearFlash.snapTo(0f)
+            lineClearFlash.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing)
+            )
+        }
+    }
+
     Canvas(modifier = modifier) {
         val cols = gameState.config.width
         val rows = gameState.config.height
@@ -545,19 +605,20 @@ fun TetrisBoardCanvas(
         val cellH = size.height / rows.toFloat()
         val cellSize = Size(cellW, cellH)
 
-        // Subtle spawn zone background highlights (cols 1..4 for P1, 5..8 for P2)
+        // Subtle spawn zone background highlights (cols 1..4 for P1, 5..8 for P2, etc.)
         for (zone in gameState.config.spawnZones) {
-            val zoneColor = PlayerPalette.accentFor(zone.playerId)
+            val isZoneSabotaged = zone.playerId in sabotagedPlayers
+            val zoneColor = if (isZoneSabotaged) ElectricGold else PlayerPalette.accentFor(zone.playerId)
             val zoneLeft = zone.columnRange.first * cellW
             val zoneWidth = (zone.columnRange.last - zone.columnRange.first + 1) * cellW
             drawRect(
-                color = zoneColor.copy(alpha = 0.04f),
+                color = zoneColor.copy(alpha = if (isZoneSabotaged) 0.12f * sabotagePulse else 0.04f),
                 topLeft = Offset(zoneLeft, 0f),
                 size = Size(zoneWidth, cellH * 2f)
             )
             // Top spawn zone danger threshold line & drop column tick
             drawLine(
-                color = zoneColor.copy(alpha = 0.45f),
+                color = zoneColor.copy(alpha = if (isZoneSabotaged) 0.85f * sabotagePulse else 0.45f),
                 start = Offset(zoneLeft + 2f, cellH),
                 end = Offset(zoneLeft + zoneWidth - 2f, cellH),
                 strokeWidth = 1.5f,
@@ -592,7 +653,7 @@ fun TetrisBoardCanvas(
             )
         }
 
-        // 1. Draw locked blocks on board
+        // 1. Draw locked blocks on board (preserving each player's skinId)
         for (r in 0 until rows) {
             for (c in 0 until cols) {
                 val cell = gameState.grid[r][c] ?: continue
@@ -603,7 +664,8 @@ fun TetrisBoardCanvas(
                         size = cellSize,
                         tetrominoType = cell.tetrominoType,
                         playerId = cell.playerId,
-                        isGhost = false
+                        isGhost = false,
+                        animProgress = animProgress
                     )
                 }
             }
@@ -620,7 +682,8 @@ fun TetrisBoardCanvas(
                             size = cellSize,
                             tetrominoType = ghost.tetrominoType,
                             playerId = ghost.playerId,
-                            isGhost = true
+                            isGhost = true,
+                            animProgress = animProgress
                         )
                     }
                 }
@@ -643,7 +706,8 @@ fun TetrisBoardCanvas(
                             tetrominoType = piece.tetrominoType,
                             playerId = piece.playerId,
                             isGhost = false,
-                            isPausedOnPiece = piece.isPausedByPiece
+                            isPausedOnPiece = piece.isPausedByPiece,
+                            animProgress = animProgress
                         )
                     }
                     if (isFocused) {
@@ -656,12 +720,56 @@ fun TetrisBoardCanvas(
                     }
                     if (isSabotaged) {
                         drawRect(
-                            color = ElectricGold.copy(alpha = 0.75f),
-                            topLeft = Offset(topLeft.x + 2f, topLeft.y + 2f),
-                            size = Size(cellW - 4f, cellH - 4f),
-                            style = Stroke(width = 2f)
+                            color = ElectricGold.copy(alpha = 0.24f * sabotagePulse),
+                            topLeft = Offset(topLeft.x - 2f, topLeft.y - 2f),
+                            size = Size(cellW + 4f, cellH + 4f)
+                        )
+                        drawRect(
+                            color = ElectricGold.copy(alpha = 0.92f * sabotagePulse),
+                            topLeft = Offset(topLeft.x + 1f, topLeft.y + 1f),
+                            size = Size(cellW - 2f, cellH - 2f),
+                            style = Stroke(width = 2.6f)
                         )
                     }
+                }
+            }
+        }
+
+        // 4. Line-clear flash bar & particle burst animation
+        val clearProgress = lineClearFlash.value
+        if (gameState.lineClearEventId > 0L && clearProgress > 0f && clearProgress < 1f) {
+            val fade = 1f - clearProgress
+            for (rowIdx in gameState.lastClearedRowIndices) {
+                if (rowIdx !in 0 until rows) continue
+                val rowY = rowIdx * cellH
+                drawRect(
+                    color = Color.White.copy(alpha = 0.65f * fade),
+                    topLeft = Offset(0f, rowY),
+                    size = Size(size.width, cellH)
+                )
+                drawRect(
+                    color = CyberCyan.copy(alpha = 0.85f * fade),
+                    topLeft = Offset(0f, rowY + cellH * 0.25f),
+                    size = Size(size.width, cellH * 0.5f)
+                )
+
+                // Burst particles radiating from each column in the cleared row
+                for (c in 0 until cols) {
+                    val baseX = (c + 0.5f) * cellW
+                    val baseY = rowY + cellH * 0.5f
+                    val dirX = if (c % 2 == 0) 1f else -1f
+                    val dirY = if ((c + rowIdx) % 2 == 0) -1f else 1f
+                    val spread = clearProgress * cellW * 1.4f
+                    val pSize = (cellW * 0.22f * fade).coerceAtLeast(2f)
+
+                    drawRect(
+                        color = if (c % 2 == 0) CyberCyan.copy(alpha = fade) else ElectricGold.copy(alpha = fade),
+                        topLeft = Offset(
+                            baseX + dirX * spread * 0.65f - pSize / 2f,
+                            baseY + dirY * spread - pSize / 2f
+                        ),
+                        size = Size(pSize, pSize)
+                    )
                 }
             }
         }
@@ -675,6 +783,7 @@ private fun TouchControlsDeck(
     enabled: Boolean,
     onAction: (PlayerAction) -> Unit
 ) {
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -710,7 +819,10 @@ private fun TouchControlsDeck(
             icon = Icons.AutoMirrored.Rounded.RotateRight,
             accent = focusAccent,
             enabled = enabled,
-            onClick = { onAction(PlayerAction.ROTATE_CW) }
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onAction(PlayerAction.ROTATE_CW)
+            }
         )
         ControlPadButton(
             modifier = Modifier.weight(1.05f),
@@ -719,7 +831,10 @@ private fun TouchControlsDeck(
             accent = focusAccent,
             highlighted = true,
             enabled = enabled,
-            onClick = { onAction(PlayerAction.HARD_DROP) }
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onAction(PlayerAction.HARD_DROP)
+            }
         )
     }
 }

@@ -133,7 +133,7 @@ data class SpawnZone(
 
 /**
  * Dynamic board configuration parameterized by playerCount so Stage 1 defaults to 2 players
- * on a 10x20 grid while allowing 3+ drop points in future stages.
+ * on a 10x20 grid while allowing 3+ drop points (e.g., 12 columns for 3 players at 1, 5, 9).
  */
 data class BoardConfig(
     val width: Int = 10,
@@ -153,14 +153,59 @@ data class BoardConfig(
     }
 
     companion object {
+        fun forPlayerCount(playerCount: Int, height: Int = 20): BoardConfig {
+            return BoardConfig(
+                width = recommendedBoardWidth(playerCount),
+                height = height,
+                playerCount = playerCount
+            )
+        }
+
+        fun recommendedBoardWidth(playerCount: Int): Int {
+            return if (playerCount <= 2) 10 else playerCount * 4
+        }
+
+        /**
+         * Computes horizontal spawn columns dynamically:
+         * - 2 players on width 10 -> [2, 6]
+         * - 3 players on width 12 -> [1, 5, 9]
+         * - N players -> evenly spaced across zones of width (boardWidth / playerCount)
+         */
+        fun getSpawnColumns(playerCount: Int, boardWidth: Int): List<Int> {
+            require(playerCount >= 1) { "Player count must be at least 1" }
+            require(boardWidth >= 4) { "Board width must be at least 4" }
+
+            if (playerCount == 2 && boardWidth == 10) {
+                return listOf(2, 6)
+            }
+
+            val zoneWidth = (boardWidth / playerCount).coerceAtLeast(1)
+            return (1..playerCount).map { index ->
+                val startCol = ((index - 1) * zoneWidth).coerceIn(0, boardWidth - 1)
+                val endCol = if (index == playerCount) {
+                    boardWidth - 1
+                } else {
+                    (startCol + zoneWidth - 1).coerceIn(startCol, boardWidth - 1)
+                }
+                val candidate = if ((endCol - startCol + 1) >= 4) {
+                    startCol + 1
+                } else {
+                    (startCol + endCol) / 2
+                }
+                candidate.coerceIn(1, (boardWidth - 2).coerceAtLeast(1))
+            }
+        }
+
         private fun buildSpawnZones(width: Int, playerCount: Int): List<SpawnZone> {
             if (playerCount == 2 && width == 10) {
+                val cols = getSpawnColumns(playerCount, width)
                 return listOf(
-                    SpawnZone(playerId = 1, spawnX = 2, spawnY = 0, columnRange = 1..4),
-                    SpawnZone(playerId = 2, spawnX = 6, spawnY = 0, columnRange = 5..8)
+                    SpawnZone(playerId = 1, spawnX = cols[0], spawnY = 0, columnRange = 1..4),
+                    SpawnZone(playerId = 2, spawnX = cols[1], spawnY = 0, columnRange = 5..8)
                 )
             }
 
+            val spawnCols = getSpawnColumns(playerCount, width)
             val zoneWidth = (width / playerCount).coerceAtLeast(1)
             return (1..playerCount).map { index ->
                 val startCol = ((index - 1) * zoneWidth).coerceIn(0, width - 1)
@@ -169,10 +214,9 @@ data class BoardConfig(
                 } else {
                     (startCol + zoneWidth - 1).coerceIn(startCol, width - 1)
                 }
-                val spawnX = ((startCol + endCol) / 2).coerceIn(1, (width - 2).coerceAtLeast(1))
                 SpawnZone(
                     playerId = index,
-                    spawnX = spawnX,
+                    spawnX = spawnCols[index - 1],
                     spawnY = 0,
                     columnRange = startCol..endCol
                 )
@@ -207,7 +251,9 @@ data class GameState(
     val isGameOver: Boolean = false,
     val winnerPlayerId: Int? = null,
     val topOutPlayerId: Int? = null,
-    val statusMessage: String? = null
+    val statusMessage: String? = null,
+    val lastClearedRowIndices: List<Int> = emptyList(),
+    val lineClearEventId: Long = 0L
 ) {
     fun isSabotaged(playerId: Int, currentTimeMillis: Long): Boolean {
         val until = sabotageBurstUntilMillis[playerId] ?: 0L

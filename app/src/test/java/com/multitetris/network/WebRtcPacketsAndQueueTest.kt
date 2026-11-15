@@ -111,6 +111,27 @@ class WebRtcPacketsAndQueueTest {
     }
 
     @Test
+    fun gridCellCodec_roundTripsAllSixStage4Skins() {
+        val allSkins = listOf(
+            "classic",
+            "neon_cyber",
+            "golden_flex",
+            "obsidian_magma",
+            "hologram_glitch",
+            "pixel_crystal"
+        )
+        for ((index, skinId) in allSkins.withIndex()) {
+            val cell = LockedCell(
+                playerId = (index % 3) + 1,
+                tetrominoType = TetrominoType.entries[index % TetrominoType.entries.size],
+                skinId = skinId
+            )
+            val decoded = GridCellCodec.decode(GridCellCodec.encode(cell))
+            assertEquals(cell, decoded)
+        }
+    }
+
+    @Test
     fun pendingIceCandidateQueue_buffersUntilRemoteDescriptionSetAndDeduplicates() {
         val queue = PendingIceCandidateQueue<String>()
         val dispatched = mutableListOf<String>()

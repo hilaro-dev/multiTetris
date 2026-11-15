@@ -113,6 +113,8 @@ fun MultiTetrisApp(
             GameScreen(
                 gameState = uiState.gameState,
                 networkState = uiState.networkState,
+                isMuted = uiState.isMuted,
+                onToggleMute = gameViewModel::toggleMute,
                 onSwitchFocus = gameViewModel::switchControlFocus,
                 onSelectFocusPlayer = gameViewModel::selectControlPlayer,
                 onAction = gameViewModel::onPlayerAction,

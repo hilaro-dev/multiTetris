@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Groups
@@ -86,6 +87,7 @@ fun HomeScreen(
     onStartLocalTest: () -> Unit
 ) {
     var showFriendsSheet by remember { mutableStateOf(false) }
+    var showArmorySheet by remember { mutableStateOf(false) }
 
     val onlineFriendsCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
     val searchingFriendsCount = socialState.friends.count { it.state == PresenceState.SEARCHING }
@@ -199,25 +201,80 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Skin Selection Section
-            SectionLabel(text = "PLAYER SKINS")
+            // Block Skins Armory Section
+            SectionLabel(text = "BLOCK SKINS ARMORY")
             Spacer(modifier = Modifier.height(8.dp))
 
-            PlayerSkinRow(
-                playerId = 1,
-                dropHint = "Your Skin • Col 2",
-                selectedSkinId = selectedSkins[1] ?: "classic",
-                onSelectSkin = { skinId -> onSelectSkin(1, skinId) }
-            )
+            val p1Skin = SkinRegistry.resolve(selectedSkins[1] ?: "classic")
+            val p2Skin = SkinRegistry.resolve(selectedSkins[2] ?: "neon_cyber")
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { showArmorySheet = true },
+                colors = CardDefaults.cardColors(containerColor = SlateSurface),
+                border = BorderStroke(1.2.dp, CyberCyan.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        SkinMiniPreview(
+                            skinId = p1Skin.skinId,
+                            playerId = 1,
+                            modifier = Modifier.size(34.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Equipped: ${p1Skin.displayName}",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "Local P2: ${p2Skin.displayName} • 6 Skins",
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
 
-            PlayerSkinRow(
-                playerId = 2,
-                dropHint = "Local P2 • Col 6",
-                selectedSkinId = selectedSkins[2] ?: "neon_cyber",
-                onSelectSkin = { skinId -> onSelectSkin(2, skinId) }
-            )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = CyberCyan.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.7f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = CyberCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Skins Armory",
+                                color = CyberCyan,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(22.dp))
 
@@ -382,6 +439,14 @@ fun HomeScreen(
             onClearFeedback = onClearFriendFeedback
         )
     }
+
+    if (showArmorySheet) {
+        SkinsArmorySheet(
+            selectedSkins = selectedSkins,
+            onEquipSkin = onSelectSkin,
+            onDismiss = { showArmorySheet = false }
+        )
+    }
 }
 
 @Composable
@@ -526,83 +591,6 @@ private fun ModeSelectorCard(
                 fontSize = 11.sp,
                 lineHeight = 14.sp
             )
-        }
-    }
-}
-
-@Composable
-private fun PlayerSkinRow(
-    playerId: Int,
-    dropHint: String,
-    selectedSkinId: String,
-    onSelectSkin: (String) -> Unit
-) {
-    val accent = PlayerPalette.accentFor(playerId)
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SlateSurface),
-        border = BorderStroke(1.dp, SubtleBorder),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Player $playerId",
-                    color = accent,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-                Text(
-                    text = dropHint,
-                    color = TextSecondary,
-                    fontSize = 11.sp
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                SkinRegistry.availableSkins.forEach { skin ->
-                    val isSelected = selectedSkinId == skin.skinId
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onSelectSkin(skin.skinId) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) accent.copy(alpha = 0.14f) else ElevatedCard,
-                        border = BorderStroke(
-                            width = if (isSelected) 1.5.dp else 1.dp,
-                            color = if (isSelected) accent else SubtleBorder
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            SkinMiniPreview(
-                                skinId = skin.skinId,
-                                playerId = playerId,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Column {
-                                Text(
-                                    text = skin.displayName,
-                                    color = if (isSelected) TextPrimary else TextSecondary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

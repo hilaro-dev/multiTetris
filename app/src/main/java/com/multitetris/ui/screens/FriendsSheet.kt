@@ -452,7 +452,7 @@ private fun FriendRowItem(
                         fontSize = 14.sp
                     )
                     Text(
-                        text = presence.friend.friendCode,
+                        text = "${presence.friend.friendCode} • ${renderer.displayName}",
                         color = TextSecondary,
                         fontSize = 11.sp
                     )

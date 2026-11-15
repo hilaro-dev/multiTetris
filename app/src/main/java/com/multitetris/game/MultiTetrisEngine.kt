@@ -302,6 +302,9 @@ class MultiTetrisEngine(
         }
 
         // Detect and remove completed horizontal rows
+        val clearedRowIndices = mutableGrid.indices.filter { r ->
+            mutableGrid[r].none { it == null }
+        }
         val remainingRows = mutableGrid.filter { row -> row.any { it == null } }
         val clearedCount = state.config.height - remainingRows.size
         val clearedGrid = if (clearedCount > 0) {
@@ -312,6 +315,8 @@ class MultiTetrisEngine(
         } else {
             mutableGrid.map { it.toList() }
         }
+        val nextClearEventId = if (clearedCount > 0) state.lineClearEventId + 1L else state.lineClearEventId
+        val nextClearedRows = if (clearedCount > 0) clearedRowIndices else state.lastClearedRowIndices
 
         val lineScore = lineClearPoints(clearedCount, state.level)
         val totalAwarded = lineScore + dropBonus
@@ -382,7 +387,10 @@ class MultiTetrisEngine(
         if (topOutPlayerId != null) {
             val updatedActive = state.activePieces.toMutableMap().apply { remove(piece.playerId) }
             val winnerId = if (state.mode == GameMode.VERSUS) {
-                state.config.spawnZones.firstOrNull { it.playerId != topOutPlayerId }?.playerId
+                state.config.spawnZones
+                    .filter { it.playerId != topOutPlayerId }
+                    .maxByOrNull { newPlayerScores[it.playerId] ?: 0 }
+                    ?.playerId
             } else {
                 null
             }
@@ -406,7 +414,9 @@ class MultiTetrisEngine(
                 isGameOver = true,
                 winnerPlayerId = winnerId,
                 topOutPlayerId = topOutPlayerId,
-                statusMessage = message
+                statusMessage = message,
+                lastClearedRowIndices = nextClearedRows,
+                lineClearEventId = nextClearEventId
             )
             return state
         }
@@ -428,7 +438,9 @@ class MultiTetrisEngine(
             playerScores = newPlayerScores,
             playerLines = newPlayerLines,
             sabotageBurstUntilMillis = newSabotageUntil,
-            lastSabotageEvent = newSabotageEvent
+            lastSabotageEvent = newSabotageEvent,
+            lastClearedRowIndices = nextClearedRows,
+            lineClearEventId = nextClearEventId
         )
 
         state = refreshPauseFlagsAndGhosts(updatedState)
@@ -559,7 +571,15 @@ class MultiTetrisEngine(
     }
 
     private fun defaultSkinFor(playerId: Int): String {
-        return if (playerId % 2 == 1) "classic" else "neon_cyber"
+        val skins = listOf(
+            "classic",
+            "neon_cyber",
+            "golden_flex",
+            "obsidian_magma",
+            "hologram_glitch",
+            "pixel_crystal"
+        )
+        return skins[(playerId - 1).coerceAtLeast(0) % skins.size]
     }
 
     companion object {

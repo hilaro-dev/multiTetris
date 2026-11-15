@@ -300,6 +300,26 @@ class MultiTetrisEngineTest {
     }
 
     @Test
+    fun getSpawnColumns_supportsTwoAndThreePlayersDynamically() {
+        assertEquals(listOf(2, 6), BoardConfig.getSpawnColumns(playerCount = 2, boardWidth = 10))
+        assertEquals(listOf(1, 5, 9), BoardConfig.getSpawnColumns(playerCount = 3, boardWidth = 12))
+
+        val threePlayerConfig = BoardConfig.forPlayerCount(3)
+        assertEquals(12, threePlayerConfig.width)
+        assertEquals(listOf(1, 5, 9), threePlayerConfig.spawnZones.map { it.spawnX })
+
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        val started = engine.startNewGame(
+            mode = GameMode.CO_OP,
+            config = threePlayerConfig
+        )
+        assertEquals(3, started.activePieces.size)
+        assertEquals(1, started.activePieces[1]?.x)
+        assertEquals(5, started.activePieces[2]?.x)
+        assertEquals(9, started.activePieces[3]?.x)
+    }
+
+    @Test
     fun versusMode_overflowingPlayer2SpawnZoneDeclaresPlayer1Winner() {
         val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
         val config = BoardConfig(width = 10, height = 20, playerCount = 2)

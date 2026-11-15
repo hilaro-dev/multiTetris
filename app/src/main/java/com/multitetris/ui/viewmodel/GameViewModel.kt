@@ -3,6 +3,7 @@ package com.multitetris.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.multitetris.audio.RetroSoundEngine
 import com.multitetris.game.BoardConfig
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
@@ -38,7 +39,8 @@ data class MultiTetrisUiState(
     val networkState: NetworkSessionState = NetworkSessionState(),
     val socialState: SocialUiState = SocialUiState(),
     val webRtcSignalState: WebRtcSignalState = WebRtcSignalState.Idle,
-    val isMultiplayerSession: Boolean = false
+    val isMultiplayerSession: Boolean = false,
+    val isMuted: Boolean = false
 ) {
     val controlledPlayerId: Int get() = networkState.controlledPlayerId
 }
@@ -50,6 +52,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val webRtcSessionController: WebRtcSessionController =
         MultiplayerSessionManager.getInstance(application.applicationContext)
     private val socialManager = FirebaseSocialManager(application.applicationContext)
+    private val soundEngine = RetroSoundEngine()
 
     private val _selectedMode = MutableStateFlow(GameMode.CO_OP)
     private val _selectedSkins = MutableStateFlow(
@@ -59,7 +62,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     private val _isMultiplayerSession = MutableStateFlow(false)
+    private val _isMuted = MutableStateFlow(false)
     private var connectedMatchId: String? = null
+    private var lastPlayedClearEventId = 0L
+    private var wasGameOver = false
+    private var lastSabotagedIds: Set<Int> = emptySet()
 
     private val activeGameStateFlow = _isMultiplayerSession.flatMapLatest { isMultiplayer ->
         if (isMultiplayer) webRtcSessionController.gameState else localSessionController.gameState
@@ -89,6 +96,34 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
+        // Trigger retro synthesized SFX on line clears, sabotage bursts, and game over
+        viewModelScope.launch {
+            activeGameStateFlow.collect { game ->
+                if (game.lineClearEventId > lastPlayedClearEventId) {
+                    lastPlayedClearEventId = game.lineClearEventId
+                    soundEngine.playLineClear(game.lastClearedRowIndices.size.coerceAtLeast(1))
+                } else if (game.lineClearEventId == 0L) {
+                    lastPlayedClearEventId = 0L
+                }
+
+                if (game.isGameOver && !wasGameOver) {
+                    soundEngine.playGameOver()
+                }
+                wasGameOver = game.isGameOver
+            }
+        }
+
+        viewModelScope.launch {
+            activeSessionStateFlow.collect { session ->
+                val currentSabotaged = session.activeSabotagedPlayerIds
+                val newlySabotaged = currentSabotaged - lastSabotagedIds
+                if (newlySabotaged.isNotEmpty()) {
+                    soundEngine.playSabotageBurst()
+                }
+                lastSabotagedIds = currentSabotaged
+            }
+        }
     }
 
     val uiState: StateFlow<MultiTetrisUiState> = combine(
@@ -98,7 +133,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         activeSessionStateFlow,
         socialManager.socialState,
         webRtcSessionController.signalState,
-        _isMultiplayerSession
+        _isMultiplayerSession,
+        _isMuted
     ) { values ->
         val mode = values[0] as GameMode
         @Suppress("UNCHECKED_CAST")
@@ -108,6 +144,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val social = values[4] as SocialUiState
         val signal = values[5] as WebRtcSignalState
         val isMultiplayer = values[6] as Boolean
+        val isMuted = values[7] as Boolean
 
         val syncedSkins = if (!isMultiplayer &&
             social.userProfile.selectedSkinId.isNotBlank() &&
@@ -126,7 +163,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             networkState = network,
             socialState = social,
             webRtcSignalState = signal,
-            isMultiplayerSession = isMultiplayer
+            isMultiplayerSession = isMultiplayer,
+            isMuted = isMuted
         )
     }.stateIn(
         scope = viewModelScope,
@@ -199,8 +237,24 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onPlayerAction(action: PlayerAction) {
+        val currentGame = uiState.value.gameState
+        if (!currentGame.isPaused && !currentGame.isGameOver) {
+            when (action) {
+                PlayerAction.MOVE_LEFT,
+                PlayerAction.MOVE_RIGHT -> soundEngine.playMove()
+                PlayerAction.ROTATE_CW -> soundEngine.playRotate()
+                PlayerAction.SOFT_DROP -> soundEngine.playSoftDrop()
+                PlayerAction.HARD_DROP -> soundEngine.playHardDrop()
+            }
+        }
         val targetPlayerId = uiState.value.controlledPlayerId
         currentController().dispatchAction(targetPlayerId, action)
+    }
+
+    fun toggleMute() {
+        val next = !_isMuted.value
+        _isMuted.value = next
+        soundEngine.isMuted = next
     }
 
     fun togglePause() {
@@ -241,5 +295,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         localSessionController.stop()
         webRtcSessionController.stop()
         socialManager.shutdown()
+        soundEngine.shutdown()
     }
 }
