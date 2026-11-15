@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +59,9 @@ import com.multitetris.ui.screens.MatchLobbyScreen
 import com.multitetris.ui.screens.ShopScreen
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElevatedCard
+import com.multitetris.ui.i18n.EnStrings
+import com.multitetris.ui.i18n.LocalStrings
+import com.multitetris.ui.i18n.TrStrings
 import com.multitetris.ui.theme.MultiTetrisTheme
 import com.multitetris.ui.theme.ObsidianBg
 import com.multitetris.ui.theme.TextPrimary
@@ -151,7 +155,9 @@ fun MultiTetrisApp(
         }
     }
 
-    MultiTetrisTheme(isDarkMode = uiState.isDarkMode) {
+    val strings = if (uiState.languageCode == "tr") TrStrings else EnStrings
+    CompositionLocalProvider(LocalStrings provides strings) {
+        MultiTetrisTheme(isDarkMode = uiState.isDarkMode) {
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
@@ -173,6 +179,8 @@ fun MultiTetrisApp(
                     onSetSoundEnabled = gameViewModel::setSoundEnabled,
                     onSetMusicEnabled = gameViewModel::setMusicEnabled,
                     onSetVibrationEnabled = gameViewModel::setVibrationEnabled,
+                    languageCode = uiState.languageCode,
+                    onSetLanguage = gameViewModel::setLanguage,
                     onOpenShop = {
                         navController.navigate(Routes.SHOP) {
                             launchSingleTop = true
@@ -274,6 +282,7 @@ fun MultiTetrisApp(
         }
     }
     }
+    }
 }
 
 @Composable
@@ -282,6 +291,7 @@ private fun IncomingRoomInviteBanner(
     onJoin: () -> Unit,
     onDecline: () -> Unit
 ) {
+    val strings = LocalStrings.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -293,7 +303,7 @@ private fun IncomingRoomInviteBanner(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Text(
-                text = "INCOMING GAME INVITE",
+                text = strings.roomInviteHeader,
                 color = CyberCyan,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -301,10 +311,17 @@ private fun IncomingRoomInviteBanner(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${invite.hostNickname} invited you to ${invite.mode.label}!",
+                text = strings.roomInviteTitle(invite.hostNickname),
                 color = TextPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = strings.roomInviteSubtitle(strings.gameModeLabel(invite.mode)),
+                color = TextSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
             )
             Spacer(modifier = Modifier.height(10.dp))
             Row(
@@ -319,7 +336,7 @@ private fun IncomingRoomInviteBanner(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = "Decline",
+                        text = strings.decline,
                         color = TextSecondary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium
@@ -335,7 +352,7 @@ private fun IncomingRoomInviteBanner(
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = "Join",
+                        text = strings.join,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )

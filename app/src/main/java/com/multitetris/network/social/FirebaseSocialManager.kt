@@ -726,8 +726,10 @@ class FirebaseSocialManager(
                         ?: return@mapNotNull null
                     val hostUid = child.child("hostUid").getValue(String::class.java)
                         ?: return@mapNotNull null
-                    val hostNickname = child.child("hostNickname").getValue(String::class.java)
-                        ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.nickname
+                    val hostNickname = child.child("senderNickname").getValue(String::class.java)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: child.child("hostNickname").getValue(String::class.java)?.takeIf { it.isNotBlank() }
+                        ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.nickname?.takeIf { it.isNotBlank() }
                         ?: "Friend"
                     val hostSkinId = child.child("hostSkinId").getValue(String::class.java)
                         ?: savedFriendsCache.firstOrNull { it.uid == hostUid }?.selectedSkinId
@@ -1036,13 +1038,17 @@ class FirebaseSocialManager(
             ?: return
         if (room.myRole != MatchRole.HOST) return
 
+        val senderNickname = _socialState.value.userProfile.nickname
+            .ifBlank { room.hostNickname }
+            .ifBlank { "Host" }
+
         val matchRef = db.getReference("matches").child(room.matchId)
         matchRef.onDisconnect().removeValue()
         matchRef.updateChildren(
             mapOf(
                 "matchId" to room.matchId,
                 "hostUid" to room.hostUid,
-                "hostNickname" to room.hostNickname,
+                "hostNickname" to senderNickname,
                 "hostSkinId" to room.hostSkinId,
                 "mode" to room.mode.name
             )
@@ -1053,7 +1059,8 @@ class FirebaseSocialManager(
         val invitePayload = mapOf(
             "matchId" to room.matchId,
             "hostUid" to room.hostUid,
-            "hostNickname" to room.hostNickname,
+            "hostNickname" to senderNickname,
+            "senderNickname" to senderNickname,
             "hostSkinId" to room.hostSkinId,
             "mode" to room.mode.name,
             "timestamp" to ServerValue.TIMESTAMP
@@ -1140,6 +1147,14 @@ class FirebaseSocialManager(
         val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
             ?: return
         if (room.myRole != MatchRole.HOST) return
+        _socialState.update { state ->
+            val current = (state.matchmakingState as? MatchmakingState.MatchFound) ?: return@update state
+            state.copy(
+                matchmakingState = current.copy(
+                    room = current.room.copy(sabotageEnabled = enabled)
+                )
+            )
+        }
         db.getReference("matches")
             .child(room.matchId)
             .child("sabotageEnabled")
@@ -1151,6 +1166,14 @@ class FirebaseSocialManager(
         val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
             ?: return
         if (room.myRole != MatchRole.HOST) return
+        _socialState.update { state ->
+            val current = (state.matchmakingState as? MatchmakingState.MatchFound) ?: return@update state
+            state.copy(
+                matchmakingState = current.copy(
+                    room = current.room.copy(mysteryEnabled = enabled)
+                )
+            )
+        }
         db.getReference("matches")
             .child(room.matchId)
             .child("mysteryEnabled")

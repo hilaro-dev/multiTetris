@@ -69,7 +69,8 @@ data class MultiTetrisUiState(
     val isDarkMode: Boolean = true,
     val soundEnabled: Boolean = true,
     val musicEnabled: Boolean = true,
-    val vibrationEnabled: Boolean = true
+    val vibrationEnabled: Boolean = true,
+    val languageCode: String = "en"
 ) {
     val controlledPlayerId: Int get() = networkState.controlledPlayerId
 }
@@ -432,7 +433,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             isDarkMode = settings.isDarkMode,
             soundEnabled = settings.soundEnabled,
             musicEnabled = settings.musicEnabled,
-            vibrationEnabled = settings.vibrationEnabled
+            vibrationEnabled = settings.vibrationEnabled,
+            languageCode = settings.languageCode
         )
     }.stateIn(
         scope = viewModelScope,
@@ -678,6 +680,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _settings.update { it.copy(vibrationEnabled = enabled) }
         viewModelScope.launch {
             settingsDataStore.setVibrationEnabled(enabled)
+        }
+    }
+
+    fun setLanguage(code: String) {
+        val normalized = if (code == "tr") "tr" else "en"
+        _settings.update { it.copy(languageCode = normalized) }
+        viewModelScope.launch {
+            settingsDataStore.setLanguage(normalized)
         }
     }
 

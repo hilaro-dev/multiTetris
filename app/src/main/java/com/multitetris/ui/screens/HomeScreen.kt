@@ -69,6 +69,7 @@ import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.stats.CareerStatsSnapshot
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.skin.SkinCatalog
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
@@ -97,6 +98,8 @@ fun HomeScreen(
     onSetSoundEnabled: (Boolean) -> Unit = {},
     onSetMusicEnabled: (Boolean) -> Unit = {},
     onSetVibrationEnabled: (Boolean) -> Unit = {},
+    languageCode: String = "en",
+    onSetLanguage: (String) -> Unit = {},
     onOpenShop: () -> Unit,
     onClaimMission: (String) -> Unit,
     onRefreshMissions: () -> Unit,
@@ -115,6 +118,7 @@ fun HomeScreen(
     var showStatsSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
+    val strings = LocalStrings.current
 
     val onlineFriendsCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
     val searchingFriendsCount = socialState.friends.count { it.state == PresenceState.SEARCHING }
@@ -184,7 +188,7 @@ fun HomeScreen(
             SegmentedModeToggle(
                 selectedMode = selectedMode,
                 onSelectMode = onSelectMode,
-                onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode) }
+                onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode, strings) }
             )
 
             Spacer(modifier = Modifier.weight(1.1f))
@@ -254,7 +258,8 @@ fun HomeScreen(
 
                 else -> {
                     if (matchState is MatchmakingState.Error) {
-                        Surface(
+                        val strings = LocalStrings.current
+    Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 10.dp),
@@ -291,16 +296,28 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.Start) {
                             Text(
-                                text = "CREATE ${selectedMode.label} ROOM",
+                                text = if (languageCode == "tr") {
+                                    "${strings.gameModeLabel(selectedMode)} ODASI OLUŞTUR"
+                                } else {
+                                    "CREATE ${selectedMode.label} ROOM"
+                                },
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.5.sp
                             )
                             Text(
                                 text = if (onlineFriendsCount > 0) {
-                                    "Invite up to 3 friends ($onlineFriendsCount online)"
+                                    if (languageCode == "tr") {
+                                        "En fazla 3 arkadaş davet et ($onlineFriendsCount çevrimiçi)"
+                                    } else {
+                                        "Invite up to 3 friends ($onlineFriendsCount online)"
+                                    }
                                 } else {
-                                    "Open 2–4P Room Lobby & invite friends"
+                                    if (languageCode == "tr") {
+                                        "2–4 kişilik Oda Lobisi aç ve arkadaşlarını davet et"
+                                    } else {
+                                        "Open 2–4P Room Lobby & invite friends"
+                                    }
                                 },
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Medium
@@ -329,7 +346,7 @@ fun HomeScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Shop • $unlockedCount/${SkinCatalog.items.size} Unlocked",
+                    text = strings.skinShopButton(unlockedCount, SkinCatalog.items.size),
                     color = TextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -418,10 +435,12 @@ fun HomeScreen(
             soundEnabled = soundEnabled,
             musicEnabled = musicEnabled,
             vibrationEnabled = vibrationEnabled,
+            languageCode = languageCode,
             onSetDarkMode = onSetDarkMode,
             onSetSoundEnabled = onSetSoundEnabled,
             onSetMusicEnabled = onSetMusicEnabled,
             onSetVibrationEnabled = onSetVibrationEnabled,
+            onSetLanguage = onSetLanguage,
             onDismiss = { showSettingsSheet = false }
         )
     }
@@ -455,7 +474,8 @@ private fun HomeTopBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Compact Player Profile Pill
-        Surface(
+        val strings = LocalStrings.current
+    Surface(
             modifier = Modifier
                 .weight(1f, fill = false)
                 .clip(RoundedCornerShape(50))
@@ -502,7 +522,8 @@ private fun HomeTopBar(
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             // Clickable Coin Balance Badge
-            Surface(
+            val strings = LocalStrings.current
+    Surface(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .clickable(onClick = onOpenShop),
@@ -533,7 +554,7 @@ private fun HomeTopBar(
             // Missions Icon Button with red notification dot when claimable
             TopIconBadgeButton(
                 icon = Icons.Rounded.EmojiEvents,
-                contentDescription = "Daily Missions",
+                contentDescription = strings.dailyMissionsContentDesc,
                 tint = ElectricGold,
                 showDot = hasClaimableMissions,
                 badgeCount = 0,
@@ -543,7 +564,7 @@ private fun HomeTopBar(
             // Career Stats Icon Button
             TopIconBadgeButton(
                 icon = Icons.Rounded.BarChart,
-                contentDescription = "Career Stats",
+                contentDescription = strings.careerStatsContentDesc,
                 tint = NeonMagenta,
                 showDot = false,
                 badgeCount = 0,
@@ -553,7 +574,7 @@ private fun HomeTopBar(
             // Friends Icon Button with pending request/invite badge
             TopIconBadgeButton(
                 icon = Icons.Rounded.People,
-                contentDescription = "Friends",
+                contentDescription = strings.friendsContentDesc,
                 tint = CyberCyan,
                 showDot = false,
                 badgeCount = friendsBadgeCount,
@@ -563,7 +584,7 @@ private fun HomeTopBar(
             // Settings Icon Button
             TopIconBadgeButton(
                 icon = Icons.Rounded.Settings,
-                contentDescription = "Settings",
+                contentDescription = strings.settingsContentDesc,
                 tint = TextPrimary,
                 showDot = false,
                 badgeCount = 0,
@@ -583,7 +604,8 @@ private fun TopIconBadgeButton(
     onClick: () -> Unit
 ) {
     Box {
-        Surface(
+        val strings = LocalStrings.current
+    Surface(
             modifier = Modifier
                 .size(34.dp)
                 .clip(CircleShape)
@@ -638,6 +660,7 @@ private fun SegmentedModeToggle(
     onSelectMode: (GameMode) -> Unit,
     onShowInfo: (GameMode) -> Unit
 ) {
+    val strings = LocalStrings.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -652,7 +675,7 @@ private fun SegmentedModeToggle(
         ) {
             SegmentedModeOption(
                 modifier = Modifier.weight(1f),
-                title = GameMode.CO_OP.label,
+                title = strings.gameModeLabel(GameMode.CO_OP),
                 icon = Icons.Rounded.Groups,
                 selected = selectedMode == GameMode.CO_OP,
                 accent = CyberCyan,
@@ -661,7 +684,7 @@ private fun SegmentedModeToggle(
             )
             SegmentedModeOption(
                 modifier = Modifier.weight(1f),
-                title = GameMode.VERSUS.label,
+                title = strings.gameModeLabel(GameMode.VERSUS),
                 icon = Icons.Rounded.Bolt,
                 selected = selectedMode == GameMode.VERSUS,
                 accent = NeonMagenta,
@@ -682,6 +705,7 @@ private fun SegmentedModeOption(
     onClick: () -> Unit,
     onInfoClick: () -> Unit
 ) {
+    val strings = LocalStrings.current
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))

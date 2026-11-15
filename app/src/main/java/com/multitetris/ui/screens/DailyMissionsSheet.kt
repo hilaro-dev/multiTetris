@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.economy.DailyMission
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -87,7 +88,7 @@ fun DailyMissionsSheet(
                     )
                     Column {
                         Text(
-                            text = "Daily Missions",
+                            text = LocalStrings.current.dailyMissionsTitle,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = TextPrimary
@@ -102,7 +103,7 @@ fun DailyMissionsSheet(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close Missions",
+                        contentDescription = LocalStrings.current.close,
                         tint = TextSecondary
                     )
                 }
@@ -226,7 +227,7 @@ private fun DailyMissionCard(
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                text = "Claimed",
+                                text = LocalStrings.current.claimedBadge,
                                 color = Color(0xFF2FE066),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
@@ -245,7 +246,7 @@ private fun DailyMissionCard(
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = "Claim +${mission.rewardCoins}",
+                                text = "${LocalStrings.current.claimReward} +${mission.rewardCoins}",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -254,7 +255,7 @@ private fun DailyMissionCard(
 
                     else -> {
                         Text(
-                            text = "In Progress",
+                            text = if (LocalStrings.current.gotIt == "Anladım") "Devam Ediyor" else "In Progress",
                             color = TextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold

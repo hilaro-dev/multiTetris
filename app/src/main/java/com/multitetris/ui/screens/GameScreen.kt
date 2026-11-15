@@ -118,6 +118,7 @@ import com.multitetris.network.NetworkSessionState
 import com.multitetris.network.SessionMode
 import com.multitetris.ui.skin.PlayerPalette
 import com.multitetris.ui.skin.SkinRegistry
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -560,7 +561,7 @@ private fun LandscapeGameLayout(
                 ) {
                     ControlPadButton(
                         modifier = Modifier.weight(1f),
-                        label = "LEFT",
+                        label = LocalStrings.current.leftBtn,
                         icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
                         accent = focusAccent,
                         enabled = controlsEnabled,
@@ -570,7 +571,7 @@ private fun LandscapeGameLayout(
                     )
                     ControlPadButton(
                         modifier = Modifier.weight(1f),
-                        label = "RIGHT",
+                        label = LocalStrings.current.rightBtn,
                         icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         accent = focusAccent,
                         enabled = controlsEnabled,
@@ -671,7 +672,7 @@ private fun LandscapeGameLayout(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 ControlPadButton(
                     modifier = Modifier.fillMaxWidth(),
-                    label = if (isJammedDebuff) "JAMMED" else "HARD DROP",
+                    label = if (isJammedDebuff) LocalStrings.current.statusJammed else LocalStrings.current.dropBtn,
                     icon = Icons.Rounded.VerticalAlignBottom,
                     accent = focusAccent,
                     highlighted = true,
@@ -697,7 +698,7 @@ private fun LandscapeGameLayout(
                     )
                     ControlPadButton(
                         modifier = Modifier.weight(1f),
-                        label = "ROTATE",
+                        label = LocalStrings.current.rotateBtn,
                         icon = Icons.AutoMirrored.Rounded.RotateRight,
                         accent = focusAccent,
                         enabled = controlsEnabled,
@@ -910,7 +911,7 @@ private fun BoardWithOverlays(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "BLINDED • ${localBlindfold.remainingSeconds}s",
+                                    text = "${LocalStrings.current.statusBlinded} • ${localBlindfold.remainingSeconds}s",
                                     color = Color(0xFFE2E8F0),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.ExtraBold,
@@ -960,7 +961,7 @@ private fun BoardWithOverlays(
                         border = BorderStroke(1.2.dp, NeonMagenta)
                     ) {
                         Text(
-                            text = "ELIMINATED$placementSuffix • SPECTATING",
+                            text = if (LocalStrings.current.gotIt == "Anladım") "ELENDİN$placementSuffix • İZLENİYOR" else "ELIMINATED$placementSuffix • SPECTATING",
                             color = NeonMagenta,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -975,7 +976,7 @@ private fun BoardWithOverlays(
                         border = BorderStroke(1.2.dp, ElectricGold)
                     ) {
                         Text(
-                            text = "BLOCKED — WAITING FOR CLEAR...",
+                            text = if (LocalStrings.current.gotIt == "Anladım") "ENGELLENDİ — SATIR TEMİZLENMESİ BEKLENİYOR..." else "BLOCKED — WAITING FOR CLEAR...",
                             color = ElectricGold,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -998,7 +999,7 @@ private fun BoardWithOverlays(
                         border = BorderStroke(1.4.dp, NeonMagenta)
                     ) {
                         Text(
-                            text = "⚠️ SYSTEM GLITCH INCOMING...",
+                            text = "⚠️ ${LocalStrings.current.systemGlitchIncoming}",
                             color = NeonMagenta,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -1193,7 +1194,7 @@ private fun TopControlBar(
                 border = BorderStroke(1.dp, Color(0xFFA855F7).copy(alpha = 0.75f))
             ) {
                 Text(
-                    text = "👻 MYSTERY MODE",
+                    text = "👻 ${LocalStrings.current.mysteryModeTitle.uppercase()}",
                     color = TextPrimary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -1809,7 +1810,7 @@ private fun TouchControlsDeck(
     ) {
         ControlPadButton(
             modifier = Modifier.weight(1f),
-            label = "LEFT",
+            label = LocalStrings.current.leftBtn,
             icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
             accent = focusAccent,
             enabled = enabled,
@@ -1828,7 +1829,7 @@ private fun TouchControlsDeck(
         )
         ControlPadButton(
             modifier = Modifier.weight(1f),
-            label = "RIGHT",
+            label = LocalStrings.current.rightBtn,
             icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             accent = focusAccent,
             enabled = enabled,
@@ -1838,7 +1839,7 @@ private fun TouchControlsDeck(
         )
         ControlPadButton(
             modifier = Modifier.weight(1f),
-            label = "ROTATE",
+            label = LocalStrings.current.rotateBtn,
             icon = Icons.AutoMirrored.Rounded.RotateRight,
             accent = focusAccent,
             enabled = enabled,
@@ -1850,7 +1851,7 @@ private fun TouchControlsDeck(
         )
         ControlPadButton(
             modifier = Modifier.weight(1.05f),
-            label = if (isDropJammed) "JAMMED" else "DROP",
+            label = if (isDropJammed) LocalStrings.current.statusJammed else LocalStrings.current.dropBtn,
             icon = Icons.Rounded.VerticalAlignBottom,
             accent = focusAccent,
             highlighted = true,
@@ -2136,7 +2137,7 @@ private fun ActiveSabotageStatusPill(
         border = BorderStroke(1.dp, pillColor)
     ) {
         Text(
-            text = "${activeSabotage.type.statusBadgeLabel} ${activeSabotage.remainingSeconds}s",
+            text = "${LocalStrings.current.sabotageStatusBadge(activeSabotage.type)} ${activeSabotage.remainingSeconds}s",
             color = pillColor,
             fontSize = 8.sp,
             fontWeight = FontWeight.ExtraBold,
@@ -2193,13 +2194,13 @@ private fun PauseOverlay(
     onRestart: () -> Unit,
     onExit: () -> Unit
 ) {
-    OverlayCard(title = "PAUSED") {
+    OverlayCard(title = LocalStrings.current.pausedTitle) {
         Button(
             onClick = onResume,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = CyberCyan, contentColor = ObsidianBg)
         ) {
-            Text("Resume", fontWeight = FontWeight.Bold)
+            Text(LocalStrings.current.resumeGame, fontWeight = FontWeight.Bold)
         }
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedButton(
@@ -2207,7 +2208,7 @@ private fun PauseOverlay(
             modifier = Modifier.fillMaxWidth(),
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
-            Text("Restart Match", color = TextPrimary)
+            Text(LocalStrings.current.playAgain, color = TextPrimary)
         }
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedButton(
@@ -2215,7 +2216,7 @@ private fun PauseOverlay(
             modifier = Modifier.fillMaxWidth(),
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
-            Text("Home Screen", color = TextSecondary)
+            Text(LocalStrings.current.backToHome, color = TextSecondary)
         }
     }
 }
@@ -2316,7 +2317,7 @@ private fun GameOverOverlay(
                             border = BorderStroke(1.dp, ElectricGold)
                         ) {
                             Text(
-                                text = "★ NEW BEST RECORD!",
+                                text = if (LocalStrings.current.gotIt == "Anladım") "★ YENİ REKOR!" else "★ NEW BEST RECORD!",
                                 color = ElectricGold,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
@@ -2376,7 +2377,7 @@ private fun GameOverOverlay(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    text = if (gameState.mode == GameMode.CO_OP) "TEAM CONTRIBUTION" else "ROUND LEADERBOARD",
+                    text = LocalStrings.current.roundLeaderboardTitle,
                     color = TextSecondary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -2461,7 +2462,7 @@ private fun GameOverOverlay(
             )
         ) {
             Text(
-                text = if (canPlayAgain) "Play Again" else "Players Left • Return Home",
+                text = if (canPlayAgain) LocalStrings.current.playAgain else LocalStrings.current.playersLeftReturnHome,
                 fontWeight = FontWeight.ExtraBold
             )
         }
@@ -2471,7 +2472,7 @@ private fun GameOverOverlay(
             modifier = Modifier.fillMaxWidth(),
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
-            Text("Back to Home", color = TextPrimary)
+            Text(LocalStrings.current.backToHome, color = TextPrimary)
         }
     }
 }
@@ -2590,7 +2591,7 @@ private fun RoundLeaderboardRow(
                     }
                 }
                 Text(
-                    text = if (isDisconnected) "Disconnected" else "$linesCleared lines • $score pts",
+                    text = if (isDisconnected) LocalStrings.current.disconnectedLabel else "${LocalStrings.current.linesShort(linesCleared)} • $score",
                     color = if (isDisconnected) NeonMagenta else TextSecondary,
                     fontSize = 10.sp,
                     maxLines = 1
@@ -2646,7 +2647,7 @@ private fun MatchRewardsCard(reward: MatchRewardBreakdown) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "MATCH REWARDS",
+                    text = if (LocalStrings.current.gotIt == "Anladım") "MAÇ ÖDÜLLERİ" else "MATCH REWARDS",
                     color = ElectricGold,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -2699,13 +2700,13 @@ private fun MatchRewardsCard(reward: MatchRewardBreakdown) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Total Earned",
+                        text = if (LocalStrings.current.gotIt == "Anladım") "Toplam Kazanılan" else "Total Earned",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Total: +$animatedTotal Coins",
+                        text = if (LocalStrings.current.gotIt == "Anladım") "Toplam: +$animatedTotal Altın" else "Total: +$animatedTotal Coins",
                         color = ElectricGold,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.ExtraBold
@@ -2737,7 +2738,7 @@ private fun DisconnectedOverlay(
                 contentColor = ObsidianBg
             )
         ) {
-            Text("Return to Home", fontWeight = FontWeight.ExtraBold)
+            Text(LocalStrings.current.backToHome, fontWeight = FontWeight.ExtraBold)
         }
     }
 }

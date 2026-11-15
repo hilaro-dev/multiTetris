@@ -71,6 +71,7 @@ import com.multitetris.ui.skin.SkinCatalog
 import com.multitetris.ui.skin.SkinCatalogItem
 import com.multitetris.ui.skin.SkinRenderer
 import com.multitetris.ui.skin.SkinTier
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -90,6 +91,7 @@ fun ShopScreen(
     onPurchaseSkin: (playerId: Int, skinId: String, price: Int) -> Unit,
     onBack: () -> Unit
 ) {
+    val strings = LocalStrings.current
     var targetPlayerId by remember { mutableIntStateOf(1) }
     var pendingPurchaseItem by remember { mutableStateOf<SkinCatalogItem?>(null) }
 
@@ -147,19 +149,19 @@ fun ShopScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back to Home",
+                            contentDescription = strings.backToHome,
                             tint = TextPrimary
                         )
                     }
                     Column {
                         Text(
-                            text = "Skins Shop",
+                            text = strings.shopTitle,
                             color = TextPrimary,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
-                            text = "${unlockedSkins.size}/${SkinCatalog.items.size} Unlocked • Live P2P Sync",
+                            text = strings.shopUnlockedCount(unlockedSkins.size, SkinCatalog.items.size),
                             color = TextSecondary,
                             fontSize = 11.sp
                         )
@@ -201,14 +203,14 @@ fun ShopScreen(
             ) {
                 ShopTargetChip(
                     modifier = Modifier.weight(1f),
-                    label = "Your Skin (P1 & Online)",
+                    label = if (strings.languageEnglish.startsWith("🇬🇧") && strings.gotIt == "Anladım") "Senin Teman (O1 & Çevrimiçi)" else "Your Skin (P1 & Online)",
                     selected = targetPlayerId == 1,
                     accent = CyberCyan,
                     onClick = { targetPlayerId = 1 }
                 )
                 ShopTargetChip(
                     modifier = Modifier.weight(1f),
-                    label = "Local P2 Skin",
+                    label = if (strings.gotIt == "Anladım") "Yerel O2 Teması" else "Local P2 Skin",
                     selected = targetPlayerId == 2,
                     accent = NeonMagenta,
                     onClick = { targetPlayerId = 2 }
@@ -258,13 +260,13 @@ fun ShopScreen(
             textContentColor = TextSecondary,
             title = {
                 Text(
-                    text = "Unlock ${item.renderer.displayName}?",
+                    text = if (strings.gotIt == "Anladım") "${item.renderer.displayName} açılsın mı?" else "Unlock ${item.renderer.displayName}?",
                     fontWeight = FontWeight.ExtraBold
                 )
             },
             text = {
                 Text(
-                    text = "Spend ${item.priceCoins} Coins to permanently unlock and equip this skin?"
+                    text = if (strings.gotIt == "Anladım") "${item.priceCoins} Altın harcayarak bu temayı kalıcı olarak açıp kuşanmak ister misin?" else "Spend ${item.priceCoins} Coins to permanently unlock and equip this skin?"
                 )
             },
             confirmButton = {
@@ -279,14 +281,14 @@ fun ShopScreen(
                     )
                 ) {
                     Text(
-                        text = "Buy • ${item.priceCoins} Coins",
+                        text = strings.buyCoinsLabel(item.priceCoins),
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingPurchaseItem = null }) {
-                    Text("Cancel", color = TextSecondary)
+                    Text(strings.cancel, color = TextSecondary)
                 }
             }
         )
@@ -495,7 +497,7 @@ private fun ShopSkinCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Buy • $priceCoins Coins",
+                            text = LocalStrings.current.buyCoinsLabel(priceCoins),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
@@ -525,7 +527,7 @@ private fun ShopSkinCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Equipped",
+                            text = LocalStrings.current.equippedBadge,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -543,7 +545,7 @@ private fun ShopSkinCard(
                         border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.65f))
                     ) {
                         Text(
-                            text = "Equip",
+                            text = LocalStrings.current.ownedBadge,
                             color = TextPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold

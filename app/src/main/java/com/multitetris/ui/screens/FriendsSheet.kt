@@ -67,6 +67,7 @@ import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.stats.FriendMatchStats
 import com.multitetris.ui.skin.SkinRegistry
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -120,7 +121,7 @@ fun FriendsSheet(
             ) {
                 Column {
                     Text(
-                        text = "Friends & Matchmaking",
+                        text = LocalStrings.current.friendsAndAccountTitle,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = TextPrimary
@@ -140,7 +141,7 @@ fun FriendsSheet(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close",
+                        contentDescription = LocalStrings.current.close,
                         tint = TextSecondary
                     )
                 }
@@ -184,7 +185,7 @@ fun FriendsSheet(
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Check,
-                                    contentDescription = "Save nickname",
+                                    contentDescription = LocalStrings.current.save,
                                     tint = CyberCyan
                                 )
                             }
@@ -197,7 +198,7 @@ fun FriendsSheet(
                         ) {
                             Column {
                                 Text(
-                                    text = "YOUR PROFILE",
+                                    text = if (LocalStrings.current.gotIt == "Anladım") "PROFİLİN" else "YOUR PROFILE",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = TextSecondary,
@@ -213,7 +214,7 @@ fun FriendsSheet(
                             IconButton(onClick = { isEditingNickname = true }) {
                                 Icon(
                                     imageVector = Icons.Rounded.Edit,
-                                    contentDescription = "Edit nickname",
+                                    contentDescription = LocalStrings.current.editNickname,
                                     tint = CyberCyan,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -231,7 +232,7 @@ fun FriendsSheet(
                     ) {
                         Column {
                             Text(
-                                text = "YOUR FRIEND CODE",
+                                text = if (LocalStrings.current.gotIt == "Anladım") "ARKADAŞ KODUN" else "YOUR FRIEND CODE",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = TextSecondary,
@@ -290,7 +291,7 @@ fun FriendsSheet(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Share",
+                                    text = if (LocalStrings.current.gotIt == "Anladım") "Paylaş" else "Share",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
@@ -362,7 +363,7 @@ fun FriendsSheet(
             if (socialState.pendingFriendRequests.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "PENDING REQUESTS (${socialState.pendingFriendRequests.size})",
+                    text = LocalStrings.current.incomingRequestsHeader(socialState.pendingFriendRequests.size),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = ElectricGold,
@@ -383,7 +384,7 @@ fun FriendsSheet(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "SAVED FRIENDS (${socialState.friends.size})",
+                text = LocalStrings.current.friendsListHeader(socialState.friends.size),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextSecondary,
@@ -400,7 +401,7 @@ fun FriendsSheet(
                     border = BorderStroke(1.dp, SubtleBorder)
                 ) {
                     Text(
-                        text = "No friends saved yet. Share your MT-XXXXX code or add a friend above to enable one-tap automatic matchmaking!",
+                        text = LocalStrings.current.noFriendsYet,
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -476,7 +477,7 @@ private fun PendingRequestRow(
                         fontSize = 14.sp
                     )
                     Text(
-                        text = "${request.fromCode} • Wants to add you",
+                        text = if (LocalStrings.current.gotIt == "Anladım") "${request.fromCode} • Seni eklemek istiyor" else "${request.fromCode} • Wants to add you",
                         color = ElectricGold,
                         fontSize = 11.sp
                     )
@@ -494,7 +495,7 @@ private fun PendingRequestRow(
                         contentColor = ObsidianBg
                     )
                 ) {
-                    Text("Accept", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(LocalStrings.current.accept, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                 }
                 OutlinedButton(
                     onClick = onDecline,
@@ -609,7 +610,7 @@ private fun FriendRowItem(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.DeleteOutline,
-                        contentDescription = "Remove Friend",
+                        contentDescription = LocalStrings.current.removeFriendContentDesc,
                         tint = TextSecondary,
                         modifier = Modifier.size(18.dp)
                     )

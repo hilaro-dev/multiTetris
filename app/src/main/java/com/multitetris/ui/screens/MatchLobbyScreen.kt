@@ -78,6 +78,7 @@ import com.multitetris.network.social.RoomPlayerSlot
 import com.multitetris.network.social.SavedFriend
 import com.multitetris.network.social.SocialUiState
 import com.multitetris.network.webrtc.WebRtcSignalState
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.skin.PlayerPalette
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
@@ -117,6 +118,7 @@ fun MatchLobbyScreen(
     val mySelectedSabotages = resolvedPlayers.firstOrNull { it.uid == myUid }?.selectedSabotages
         ?: SabotageConfig.defaultLoadout
     var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
+    val strings = LocalStrings.current
 
     Box(
         modifier = Modifier
@@ -156,18 +158,18 @@ fun MatchLobbyScreen(
                         modifier = Modifier.size(15.dp)
                     )
                     Text(
-                        text = "${room.mode.label} LOBBY • ${resolvedPlayers.size}/4 PLAYERS",
+                        text = strings.lobbyModePlayersHeader(strings.gameModeLabel(room.mode), resolvedPlayers.size),
                         color = modeAccent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 1.sp
                     )
                     InfoIconButton(
-                        contentDescription = "${room.mode.label} Info",
+                        contentDescription = strings.moreInfoAbout(strings.gameModeLabel(room.mode)),
                         tint = modeAccent,
                         iconSize = 14.dp,
                         touchSize = 18.dp,
-                        onClick = { activeTooltip = GameInfoCatalog.forGameMode(room.mode) }
+                        onClick = { activeTooltip = GameInfoCatalog.forGameMode(room.mode, strings) }
                     )
                 }
             }
@@ -175,7 +177,7 @@ fun MatchLobbyScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = if (isHost) "Multiplayer Room" else "Joined Room",
+                text = strings.roomLobbyTitle,
                 fontSize = 23.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = TextPrimary,
@@ -306,17 +308,17 @@ fun MatchLobbyScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
                                                 Text(
-                                                    text = subMode.label,
+                                                    text = strings.versusSubModeLabel(subMode),
                                                     color = if (selected) Color.White else TextSecondary,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     fontSize = 12.sp
                                                 )
                                                 InfoIconButton(
-                                                    contentDescription = "${subMode.label} Info",
+                                                    contentDescription = strings.moreInfoAbout(strings.versusSubModeLabel(subMode)),
                                                     tint = if (selected) Color.White else TextSecondary,
                                                     iconSize = 14.dp,
                                                     touchSize = 18.dp,
-                                                    onClick = { activeTooltip = GameInfoCatalog.forVersusSubMode(subMode) }
+                                                    onClick = { activeTooltip = GameInfoCatalog.forVersusSubMode(subMode, strings) }
                                                 )
                                             }
                                         }
@@ -367,18 +369,18 @@ fun MatchLobbyScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Versus Rule: ${room.versusSubMode.label}",
+                                text = strings.versusSubModeLabel(room.versusSubMode),
                                 color = TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             InfoIconButton(
-                                contentDescription = "${room.versusSubMode.label} Info",
+                                contentDescription = strings.moreInfoAbout(strings.versusSubModeLabel(room.versusSubMode)),
                                 tint = modeAccent,
                                 iconSize = 14.dp,
                                 touchSize = 20.dp,
-                                onClick = { activeTooltip = GameInfoCatalog.forVersusSubMode(room.versusSubMode) }
+                                onClick = { activeTooltip = GameInfoCatalog.forVersusSubMode(room.versusSubMode, strings) }
                             )
                         }
                     }
@@ -392,7 +394,7 @@ fun MatchLobbyScreen(
                 isHost = isHost,
                 isVersus = room.mode == GameMode.VERSUS,
                 onToggle = onSetSabotageEnabled,
-                onShowInfo = { activeTooltip = GameInfoCatalog.sabotageMode }
+                onShowInfo = { activeTooltip = GameInfoCatalog.sabotageMode(strings) }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -400,17 +402,21 @@ fun MatchLobbyScreen(
                 mysteryEnabled = room.mysteryEnabled,
                 isHost = isHost,
                 onToggle = onSetMysteryEnabled,
-                onShowInfo = { activeTooltip = GameInfoCatalog.mysteryMode }
+                onShowInfo = { activeTooltip = GameInfoCatalog.mysteryMode(strings) }
             )
 
             // Versus Loadout Drafting (Pick 2 Sabotages, visible to all when Sabotage Mode is ON)
-            if (showSabotageDraft) {
-                Spacer(modifier = Modifier.height(8.dp))
-                SabotageDraftChipBar(
-                    selectedSabotages = mySelectedSabotages,
-                    onToggleSabotage = onToggleSabotage,
-                    onShowSabotageInfo = { sab -> activeTooltip = GameInfoCatalog.forSabotage(sab) }
-                )
+            androidx.compose.animation.AnimatedVisibility(
+                visible = room.sabotageEnabled && room.mode == GameMode.VERSUS
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SabotageDraftChipBar(
+                        selectedSabotages = mySelectedSabotages,
+                        onToggleSabotage = onToggleSabotage,
+                        onShowSabotageInfo = { sab -> activeTooltip = GameInfoCatalog.forSabotage(sab, strings) }
+                    )
+                }
             }
 
             // Host Friend Invite List (available while fewer than 4 players in room)
@@ -424,7 +430,7 @@ fun MatchLobbyScreen(
                     val availableFriends = socialState.friends.filter { it.friend.uid !in occupiedUids }
                     val onlineCount = availableFriends.count { it.state != PresenceState.OFFLINE }
                     Text(
-                        text = "INVITE FRIENDS ($onlineCount ONLINE • ${4 - resolvedPlayers.size} SLOTS OPEN)",
+                        text = "${strings.inviteFriendsTitle} ($onlineCount ${strings.onlineLabel.uppercase()} • ${4 - resolvedPlayers.size})",
                         color = CyberCyan,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
@@ -492,9 +498,9 @@ fun MatchLobbyScreen(
                         )
                         Text(
                             text = if (isHost) {
-                                "All 4 slots filled! Tap Start Match when ready."
+                                strings.readyStatus
                             } else {
-                                "Connected as Slot #${room.mySlotIndex}. Waiting for Host to start..."
+                                strings.waitingForHostToStart
                             },
                             color = TextSecondary,
                             fontSize = 12.sp
@@ -532,9 +538,9 @@ fun MatchLobbyScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = when {
-                                resolvedPlayers.size < 2 -> "Waiting for 1+ Friend to Join..."
-                                connectedPeerUids.isEmpty() -> "Establishing P2P Link..."
-                                else -> "START MATCH (${resolvedPlayers.size} PLAYERS)"
+                                resolvedPlayers.size < 2 -> strings.needMorePlayersToStart
+                                connectedPeerUids.isEmpty() -> strings.connectingToHost
+                                else -> "${strings.startMatch} (${resolvedPlayers.size})"
                             },
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 14.sp
@@ -558,7 +564,7 @@ fun MatchLobbyScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Leave Room Lobby",
+                        text = strings.leaveRoomLobby,
                         color = TextPrimary,
                         fontWeight = FontWeight.Bold
                     )
@@ -590,7 +596,7 @@ fun MatchLobbyScreen(
             },
             title = {
                 Text(
-                    text = "Connection Blocked",
+                    text = strings.connectionTimedOutTitle,
                     fontWeight = FontWeight.ExtraBold
                 )
             },
@@ -608,7 +614,7 @@ fun MatchLobbyScreen(
                         contentColor = ObsidianBg
                     )
                 ) {
-                    Text("Back to Home", fontWeight = FontWeight.ExtraBold)
+                    Text(strings.backToHome, fontWeight = FontWeight.ExtraBold)
                 }
             }
         )
@@ -684,7 +690,7 @@ private fun LobbySlotGridItem(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Invite a friend",
+                    text = LocalStrings.current.waitingForPlayer,
                     color = TextSecondary.copy(alpha = 0.7f),
                     fontSize = 10.sp
                 )
@@ -726,8 +732,9 @@ private fun LobbySlotGridItem(
             ) {
                 Text(
                     text = buildString {
-                        append(if (slotIndex == 1) "HOST" else "P$slotIndex")
-                        if (isMe) append(" • YOU")
+                        val strings = LocalStrings.current
+                        append(if (slotIndex == 1) strings.hostTag else "P$slotIndex")
+                        if (isMe) append(" • ${strings.youTag}")
                     },
                     color = slotAccent,
                     fontSize = 10.sp,
@@ -804,7 +811,7 @@ private fun LobbySlotGridItem(
                                             modifier = Modifier.size(10.dp)
                                         )
                                         Text(
-                                            text = sab.shortLabel,
+                                            text = LocalStrings.current.sabotageShortLabel(sab),
                                             color = sabColor,
                                             fontSize = 8.sp,
                                             fontWeight = FontWeight.Bold
@@ -868,18 +875,19 @@ private fun SabotageModeToggleCard(
                     modifier = Modifier.size(18.dp)
                 )
                 Column {
+                    val strings = LocalStrings.current
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "Sabotage Mode",
+                            text = strings.sabotageModeTitle,
                             color = TextPrimary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
                         InfoIconButton(
-                            contentDescription = "Sabotage Mode Info",
+                            contentDescription = strings.moreInfoAbout(strings.sabotageModeTitle),
                             tint = if (sabotageEnabled) ElectricGold else TextSecondary,
                             iconSize = 14.dp,
                             touchSize = 18.dp,
@@ -887,14 +895,7 @@ private fun SabotageModeToggleCard(
                         )
                     }
                     Text(
-                        text = when {
-                            !isVersus && sabotageEnabled -> "ON • Rogue AI triggers random System Glitches every 22s"
-                            !isVersus && isHost -> "OFF • Toggle to enable Co-op Rogue AI System Glitches"
-                            !isVersus -> "OFF • Host controls Co-op System Glitches"
-                            sabotageEnabled -> "ON • Players draft 2 Versus sabotages"
-                            isHost -> "OFF • Toggle to enable Versus sabotage drafting"
-                            else -> "OFF • Host controls match modifiers"
-                        },
+                        text = strings.sabotageModeSubtitle,
                         color = if (sabotageEnabled) ElectricGold else TextSecondary,
                         fontSize = 10.sp
                     )
@@ -951,18 +952,19 @@ private fun MysteryModeToggleCard(
                     modifier = Modifier.size(18.dp)
                 )
                 Column {
+                    val strings = LocalStrings.current
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "👻 Mystery Mode",
+                            text = "👻 ${strings.mysteryModeTitle}",
                             color = TextPrimary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
                         InfoIconButton(
-                            contentDescription = "Mystery Mode Info",
+                            contentDescription = strings.moreInfoAbout(strings.mysteryModeTitle),
                             tint = if (mysteryEnabled) mysteryViolet else TextSecondary,
                             iconSize = 14.dp,
                             touchSize = 18.dp,
@@ -970,11 +972,7 @@ private fun MysteryModeToggleCard(
                         )
                     }
                     Text(
-                        text = when {
-                            mysteryEnabled -> "ON • Pieces vanish after 1s (+25% Coins)"
-                            isHost -> "OFF • 1s spawn visibility & 1.25x Mystery Bonus"
-                            else -> "OFF • Host controls Mystery Mode"
-                        },
+                        text = strings.mysteryModeSubtitle,
                         color = if (mysteryEnabled) mysteryViolet else TextSecondary,
                         fontSize = 10.sp
                     )
@@ -1011,23 +1009,18 @@ private fun SabotageDraftChipBar(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            val strings = LocalStrings.current
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "PICK 2 SABOTAGES",
+                    text = strings.pickSabotagesPrompt(selectedSabotages.size),
                     color = ElectricGold,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 1.sp
-                )
-                Text(
-                    text = "${selectedSabotages.size}/${SabotageConfig.MAX_DRAFT_SLOTS} SELECTED",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
                 )
             }
             Row(
@@ -1059,12 +1052,12 @@ private fun SabotageDraftChipBar(
                             ) {
                                 Icon(
                                     imageVector = sabotageIcon(sab),
-                                    contentDescription = sab.displayName,
+                                    contentDescription = strings.sabotageDisplayName(sab),
                                     tint = if (isSelected) accent else TextSecondary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = sab.shortLabel,
+                                    text = strings.sabotageShortLabel(sab),
                                     color = if (isSelected) TextPrimary else TextSecondary,
                                     fontSize = 9.sp,
                                     fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
@@ -1078,7 +1071,7 @@ private fun SabotageDraftChipBar(
                                     .padding(1.dp)
                             ) {
                                 InfoIconButton(
-                                    contentDescription = "${sab.displayName} Info",
+                                    contentDescription = strings.moreInfoAbout(strings.sabotageDisplayName(sab)),
                                     tint = if (isSelected) accent else TextSecondary,
                                     iconSize = 11.dp,
                                     touchSize = 16.dp,
@@ -1194,7 +1187,7 @@ private fun InLobbyFriendInviteRow(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Invited",
+                            text = LocalStrings.current.invitedLabel,
                             color = ElectricGold,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -1218,7 +1211,7 @@ private fun InLobbyFriendInviteRow(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Invite",
+                            text = LocalStrings.current.inviteButton,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold
                         )

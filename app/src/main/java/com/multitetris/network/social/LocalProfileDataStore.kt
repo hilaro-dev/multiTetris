@@ -35,7 +35,8 @@ data class AppSettingsSnapshot(
     val isDarkMode: Boolean = true,
     val soundEnabled: Boolean = true,
     val musicEnabled: Boolean = true,
-    val vibrationEnabled: Boolean = true
+    val vibrationEnabled: Boolean = true,
+    val languageCode: String = "en"
 )
 
 /**
@@ -200,7 +201,8 @@ class LocalProfileDataStore(private val context: Context) {
             isDarkMode = prefs[KEY_DARK_MODE] ?: true,
             soundEnabled = prefs[KEY_SOUND_ENABLED] ?: true,
             musicEnabled = prefs[KEY_MUSIC_ENABLED] ?: true,
-            vibrationEnabled = prefs[KEY_VIBRATION_ENABLED] ?: true
+            vibrationEnabled = prefs[KEY_VIBRATION_ENABLED] ?: true,
+            languageCode = prefs[KEY_LANGUAGE_CODE] ?: "en"
         )
     }
 
@@ -228,6 +230,13 @@ class LocalProfileDataStore(private val context: Context) {
         }
     }
 
+    suspend fun setLanguage(code: String) {
+        val normalized = if (code == "tr") "tr" else "en"
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_LANGUAGE_CODE] = normalized
+        }
+    }
+
     private fun decodeFriends(raw: String?): List<SavedFriend> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<SavedFriend>>(raw) }
@@ -248,5 +257,6 @@ class LocalProfileDataStore(private val context: Context) {
         private val KEY_SOUND_ENABLED = booleanPreferencesKey("settings_sound_enabled")
         private val KEY_MUSIC_ENABLED = booleanPreferencesKey("settings_music_enabled")
         private val KEY_VIBRATION_ENABLED = booleanPreferencesKey("settings_vibration_enabled")
+        private val KEY_LANGUAGE_CODE = stringPreferencesKey("settings_language_code")
     }
 }

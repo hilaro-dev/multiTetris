@@ -36,6 +36,9 @@ import com.multitetris.game.GameMode
 import com.multitetris.game.SabotageConfig
 import com.multitetris.game.SabotageType
 import com.multitetris.game.VersusSubMode
+import com.multitetris.ui.i18n.AppStrings
+import com.multitetris.ui.i18n.EnStrings
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.NeonMagenta
@@ -53,70 +56,66 @@ data class InfoTooltipData(
 
 object GameInfoCatalog {
 
-    fun forGameMode(mode: GameMode): InfoTooltipData = when (mode) {
+    fun forGameMode(mode: GameMode, strings: AppStrings = EnStrings): InfoTooltipData = when (mode) {
         GameMode.CO_OP -> InfoTooltipData(
-            title = "Co-op Mode",
-            badge = "2–4 PLAYERS",
-            description = "Share one arena with teammates and combine your score. If a player's spawn zone gets blocked, clearing any line frees them back into the match!",
+            title = strings.tooltipCoopTitle,
+            badge = if (strings === EnStrings) "2–4 PLAYERS" else "2–4 OYUNCU",
+            description = strings.tooltipCoopDesc,
             accentColor = CyberCyan
         )
 
         GameMode.VERSUS -> InfoTooltipData(
-            title = "Versus Mode",
-            badge = "LAST STANDING",
-            description = "Compete to outlast every opponent! Clearing lines sends a brief speed burst to rivals. Top out and you're eliminated while survivors fight on.",
+            title = strings.tooltipVersusTitle,
+            badge = if (strings === EnStrings) "LAST STANDING" else "SON KALAN KAZANIR",
+            description = strings.tooltipVersusDesc,
             accentColor = NeonMagenta
         )
     }
 
-    fun forVersusSubMode(subMode: VersusSubMode): InfoTooltipData = when (subMode) {
+    fun forVersusSubMode(subMode: VersusSubMode, strings: AppStrings = EnStrings): InfoTooltipData = when (subMode) {
         VersusSubMode.FREE_FOR_ALL -> InfoTooltipData(
-            title = "Free-For-All (FFA)",
-            badge = "SOLO SURVIVAL",
-            description = "Every player fights for themselves across 2–4 spawn zones. Outlast every rival to claim 1st place and top coin rewards.",
+            title = strings.tooltipFfaTitle,
+            badge = if (strings === EnStrings) "SOLO SURVIVAL" else "TEKLİ HAYATTA KALMA",
+            description = strings.tooltipFfaDesc,
             accentColor = NeonMagenta
         )
 
         VersusSubMode.TEAMS_2V2 -> InfoTooltipData(
-            title = "2v2 / Teams Mode",
-            badge = "CYAN VS MAGENTA",
-            description = "Two teams battle on a 16×20 board. Line-clear speed bursts and sabotages only hit the opposing team—last team with a standing player wins!",
+            title = strings.tooltipTeamsTitle,
+            badge = if (strings === EnStrings) "CYAN VS MAGENTA" else "MAVİ VS PEMBE",
+            description = strings.tooltipTeamsDesc,
             accentColor = CyberCyan
         )
     }
 
-    val sabotageMode: InfoTooltipData = InfoTooltipData(
-        title = "Sabotage Mode",
-        badge = "VERSUS & CO-OP",
-        description = "In Versus, each player drafts 2 one-time sabotage abilities to disrupt rivals. In Co-op, a Rogue AI triggers random System Glitches every 22 seconds!",
+    fun sabotageMode(strings: AppStrings = EnStrings): InfoTooltipData = InfoTooltipData(
+        title = strings.tooltipSabotageTitle,
+        badge = if (strings === EnStrings) "VERSUS & CO-OP" else "KARŞILIKLI & İŞBİRLİĞİ",
+        description = strings.tooltipSabotageDesc,
         accentColor = ElectricGold
     )
 
-    val mysteryMode: InfoTooltipData = InfoTooltipData(
-        title = "Mystery Mode",
-        badge = "+1.25X COINS",
-        description = "Your falling piece turns invisible 1 second after spawning—steer by memory! Other players can still see your piece to spot or taunt you.",
+    fun mysteryMode(strings: AppStrings = EnStrings): InfoTooltipData = InfoTooltipData(
+        title = strings.tooltipMysteryTitle,
+        badge = if (strings === EnStrings) "+1.25X COINS" else "+%25 ALTIN",
+        description = strings.tooltipMysteryDesc,
         accentColor = Color(0xFFA855F7)
     )
 
-    fun forSabotage(type: SabotageType): InfoTooltipData {
+    fun forSabotage(type: SabotageType, strings: AppStrings = EnStrings): InfoTooltipData {
         val ms = SabotageConfig.durationMs(type)
-        val secondsLabel = if (ms % 1000L == 0L) "${ms / 1000L}s" else "${ms / 1000.0}s"
+        val unit = if (strings === EnStrings) "s" else " sn"
+        val secondsLabel = if (ms % 1000L == 0L) "${ms / 1000L}$unit" else "${ms / 1000.0}$unit"
         val details = when (type) {
-            SabotageType.BLINDFOLD_FOG ->
-                "Covers the target's entire board in opaque swirling storm fog so they must place pieces purely by spatial memory."
-            SabotageType.CONTROLS_FLIP ->
-                "Swaps the target's Left and Right movement buttons for the duration, throwing off muscle memory."
-            SabotageType.BUTTON_FREEZE ->
-                "Freezes all of the target's movement and rotation buttons in ice so they cannot steer until it thaws."
-            SabotageType.TURBO_DROP ->
-                "Triples the target's piece fall speed, forcing rapid reactions before blocks stack up."
-            SabotageType.DROP_JAMMER ->
-                "Scrambles the target's Next Piece preview to ??? and disables their Hard Drop button."
+            SabotageType.BLINDFOLD_FOG -> strings.tooltipBlindfoldDesc
+            SabotageType.CONTROLS_FLIP -> strings.tooltipControlsFlipDesc
+            SabotageType.BUTTON_FREEZE -> strings.tooltipIceFreezeDesc
+            SabotageType.TURBO_DROP -> strings.tooltipTurboDropDesc
+            SabotageType.DROP_JAMMER -> strings.tooltipJammerDesc
         }
         return InfoTooltipData(
-            title = type.displayName,
-            badge = "DURATION: $secondsLabel",
+            title = strings.sabotageDisplayName(type),
+            badge = "${strings.tooltipDurationPrefix}$secondsLabel".uppercase(),
             description = details,
             accentColor = when (type) {
                 SabotageType.BLINDFOLD_FOG -> Color(0xFFB388FF)
@@ -198,7 +197,7 @@ fun InfoTooltipDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close",
+                            contentDescription = LocalStrings.current.close,
                             tint = TextSecondary,
                             modifier = Modifier.size(18.dp)
                         )

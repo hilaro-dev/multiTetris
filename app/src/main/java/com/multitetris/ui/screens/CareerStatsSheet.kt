@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.stats.CareerStatsSnapshot
 import com.multitetris.stats.ModeCareerStats
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -84,13 +85,13 @@ fun CareerStatsSheet(
                     )
                     Column {
                         Text(
-                            text = "Career Stats",
+                            text = LocalStrings.current.careerStatsTitle,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = TextPrimary
                         )
                         Text(
-                            text = "Lifetime totals & mode records",
+                            text = LocalStrings.current.careerStatsSubtitle,
                             fontSize = 11.sp,
                             color = TextSecondary
                         )
@@ -99,7 +100,7 @@ fun CareerStatsSheet(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close",
+                        contentDescription = LocalStrings.current.close,
                         tint = TextSecondary
                     )
                 }
@@ -112,14 +113,14 @@ fun CareerStatsSheet(
             ) {
                 CareerStatTile(
                     modifier = Modifier.weight(1f),
-                    label = "TOTAL MATCHES",
+                    label = LocalStrings.current.statMatchesPlayed.uppercase(),
                     value = stats.totalMatches.toString(),
-                    subtitle = "${stats.totalLinesCleared} total lines",
+                    subtitle = LocalStrings.current.linesShort(stats.totalLinesCleared),
                     accent = CyberCyan
                 )
                 CareerStatTile(
                     modifier = Modifier.weight(1f),
-                    label = "VERSUS WIN RATE",
+                    label = LocalStrings.current.statWinRate.uppercase(),
                     value = "${stats.versusWinRatePercent}%",
                     subtitle = "${stats.versusWins}W - ${stats.versusLosses}L",
                     accent = NeonMagenta
@@ -132,16 +133,16 @@ fun CareerStatsSheet(
             ) {
                 CareerStatTile(
                     modifier = Modifier.weight(1f),
-                    label = "HIGHEST SCORE",
+                    label = LocalStrings.current.statBestScore.uppercase(),
                     value = stats.highestSoloOrMatchScore.toString(),
-                    subtitle = "Best single run",
+                    subtitle = if (LocalStrings.current.gotIt == "Anladım") "En iyi tek maç" else "Best single run",
                     accent = ElectricGold
                 )
                 CareerStatTile(
                     modifier = Modifier.weight(1f),
-                    label = "VERSUS WINS",
+                    label = LocalStrings.current.statVersusWins.uppercase(),
                     value = stats.versusWins.toString(),
-                    subtitle = "${stats.versusLosses} losses",
+                    subtitle = if (LocalStrings.current.gotIt == "Anladım") "${stats.versusLosses} mağlubiyet" else "${stats.versusLosses} losses",
                     accent = Color(0xFF2FE066)
                 )
             }
@@ -172,7 +173,7 @@ fun CareerStatsSheet(
                         )
                         Column {
                             Text(
-                                text = "BEST CO-OP RECORD",
+                                text = if (LocalStrings.current.gotIt == "Anladım") "EN İYİ İŞBİRLİĞİ REKORU" else "BEST CO-OP RECORD",
                                 color = CyberCyan,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
@@ -192,7 +193,7 @@ fun CareerStatsSheet(
                         border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.55f))
                     ) {
                         Text(
-                            text = "${stats.bestCoopLines} Lines",
+                            text = "${stats.bestCoopLines} ${LocalStrings.current.linesLabel}",
                             color = CyberCyan,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -204,7 +205,7 @@ fun CareerStatsSheet(
 
             // Per-Mode Breakdown
             Text(
-                text = "PER-MODE BREAKDOWN",
+                text = if (LocalStrings.current.gotIt == "Anladım") "MOD BAZLI DAĞILIM" else "PER-MODE BREAKDOWN",
                 color = TextSecondary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -219,7 +220,7 @@ fun CareerStatsSheet(
                     border = BorderStroke(1.dp, SubtleBorder)
                 ) {
                     Text(
-                        text = "No completed matches yet. Play Co-op or Versus to start building your career record!",
+                        text = if (LocalStrings.current.gotIt == "Anladım") "Henüz tamamlanmış maç yok. Kariyer kaydını başlatmak için İşbirliği veya Karşılıklı oyna!" else "No completed matches yet. Play Co-op or Versus to start building your career record!",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(14.dp)
@@ -320,7 +321,7 @@ private fun ModeBreakdownCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${stats.totalMatches} matches • ${stats.totalLinesCleared} lines",
+                        text = if (LocalStrings.current.gotIt == "Anladım") "${stats.totalMatches} maç • ${stats.totalLinesCleared} satır" else "${stats.totalMatches} matches • ${stats.totalLinesCleared} lines",
                         color = TextSecondary,
                         fontSize = 11.sp
                     )

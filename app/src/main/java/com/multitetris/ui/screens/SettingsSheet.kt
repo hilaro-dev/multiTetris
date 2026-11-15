@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.multitetris.ui.i18n.LocalStrings
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -52,12 +53,15 @@ fun SettingsSheet(
     soundEnabled: Boolean,
     musicEnabled: Boolean,
     vibrationEnabled: Boolean,
+    languageCode: String = "en",
     onSetDarkMode: (Boolean) -> Unit,
     onSetSoundEnabled: (Boolean) -> Unit,
     onSetMusicEnabled: (Boolean) -> Unit,
     onSetVibrationEnabled: (Boolean) -> Unit,
+    onSetLanguage: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    val strings = LocalStrings.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -89,7 +93,7 @@ fun SettingsSheet(
                         modifier = Modifier.size(22.dp)
                     )
                     Text(
-                        text = "Settings",
+                        text = strings.settingsTitle,
                         color = TextPrimary,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold
@@ -98,16 +102,25 @@ fun SettingsSheet(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close Settings",
+                        contentDescription = strings.close,
                         tint = TextSecondary
                     )
                 }
             }
 
+            LanguageSelectorRow(
+                selectedCode = languageCode,
+                title = strings.languageTitle,
+                subtitle = strings.languageSubtitle,
+                englishLabel = strings.languageEnglish,
+                turkishLabel = strings.languageTurkish,
+                onSelect = onSetLanguage
+            )
+
             SettingsToggleRow(
                 icon = Icons.Rounded.DarkMode,
-                title = "Dark Mode",
-                subtitle = if (isDarkMode) "Arcade Neon Dark theme active" else "High-Contrast Light theme active",
+                title = strings.darkModeTitle,
+                subtitle = if (isDarkMode) strings.darkModeSubtitleOn else strings.darkModeSubtitleOff,
                 accent = CyberCyan,
                 checked = isDarkMode,
                 onCheckedChange = onSetDarkMode
@@ -115,8 +128,8 @@ fun SettingsSheet(
 
             SettingsToggleRow(
                 icon = Icons.AutoMirrored.Rounded.VolumeUp,
-                title = "Sound Effects",
-                subtitle = if (soundEnabled) "8-bit chiptune tones enabled" else "All game audio muted",
+                title = strings.soundEffectsTitle,
+                subtitle = if (soundEnabled) strings.soundEffectsSubtitleOn else strings.soundEffectsSubtitleOff,
                 accent = ElectricGold,
                 checked = soundEnabled,
                 onCheckedChange = onSetSoundEnabled
@@ -124,8 +137,8 @@ fun SettingsSheet(
 
             SettingsToggleRow(
                 icon = Icons.Rounded.MusicNote,
-                title = "Background Music",
-                subtitle = if (musicEnabled) "Lobby synth & Korobeiniki theme active" else "Background chiptune music off",
+                title = strings.backgroundMusicTitle,
+                subtitle = if (musicEnabled) strings.backgroundMusicSubtitleOn else strings.backgroundMusicSubtitleOff,
                 accent = Color(0xFFA855F7),
                 checked = musicEnabled,
                 onCheckedChange = onSetMusicEnabled
@@ -133,14 +146,79 @@ fun SettingsSheet(
 
             SettingsToggleRow(
                 icon = Icons.Rounded.Vibration,
-                title = "Vibration / Haptics",
-                subtitle = if (vibrationEnabled) "Tactile feedback & line-clear pulses on" else "All haptic vibrations disabled",
+                title = strings.vibrationTitle,
+                subtitle = if (vibrationEnabled) strings.vibrationSubtitleOn else strings.vibrationSubtitleOff,
                 accent = NeonMagenta,
                 checked = vibrationEnabled,
                 onCheckedChange = onSetVibrationEnabled
             )
 
             Spacer(modifier = Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun LanguageSelectorRow(
+    selectedCode: String,
+    title: String,
+    subtitle: String,
+    englishLabel: String,
+    turkishLabel: String,
+    onSelect: (String) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = ElevatedCard,
+        border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column {
+                Text(
+                    text = title,
+                    color = TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = subtitle,
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val options = listOf("en" to englishLabel, "tr" to turkishLabel)
+                options.forEach { (code, label) ->
+                    val selected = selectedCode == code
+                    Surface(
+                        onClick = { onSelect(code) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) CyberCyan.copy(alpha = 0.18f) else SlateSurface,
+                        border = BorderStroke(
+                            width = if (selected) 1.5.dp else 1.dp,
+                            color = if (selected) CyberCyan else SubtleBorder
+                        )
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (selected) CyberCyan else TextSecondary,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.padding(vertical = 9.dp, horizontal = 10.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
