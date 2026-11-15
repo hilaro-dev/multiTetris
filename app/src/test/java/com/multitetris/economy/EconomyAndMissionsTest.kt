@@ -91,13 +91,33 @@ class EconomyAndMissionsTest {
     }
 
     @Test
-    fun skinCatalog_hasExpectedPricesForAllSixSkins() {
-        assertEquals(6, SkinCatalog.items.size)
+    fun skinCatalog_hasExpectedTwentySkinsTiersAndPrices() {
+        assertEquals(20, SkinCatalog.items.size)
+        assertEquals(5, SkinCatalog.items.count { it.tier == com.multitetris.ui.skin.SkinTier.BASIC })
+        assertEquals(10, SkinCatalog.items.count { it.tier == com.multitetris.ui.skin.SkinTier.RARE })
+        assertEquals(5, SkinCatalog.items.count { it.tier == com.multitetris.ui.skin.SkinTier.MYTHIC })
+
         assertEquals(0, SkinCatalog.priceFor("classic"))
-        assertEquals(150, SkinCatalog.priceFor("neon_cyber"))
-        assertEquals(300, SkinCatalog.priceFor("pixel_crystal"))
-        assertEquals(500, SkinCatalog.priceFor("obsidian_magma"))
-        assertEquals(750, SkinCatalog.priceFor("hologram_glitch"))
-        assertEquals(1200, SkinCatalog.priceFor("golden_flex"))
+        assertEquals(100, SkinCatalog.priceFor("minimal_matte"))
+        assertEquals(150, SkinCatalog.priceFor("pastel_dream"))
+        assertEquals(200, SkinCatalog.priceFor("retro_gameboy"))
+        assertEquals(250, SkinCatalog.priceFor("blueprint_grid"))
+
+        assertEquals(350, SkinCatalog.priceFor("neon_cyber"))
+        assertEquals(400, SkinCatalog.priceFor("pixel_crystal"))
+        assertEquals(450, SkinCatalog.priceFor("frosted_ice"))
+        assertEquals(500, SkinCatalog.priceFor("toxic_slime"))
+        assertEquals(550, SkinCatalog.priceFor("sakura_petal"))
+        assertEquals(600, SkinCatalog.priceFor("obsidian_magma"))
+        assertEquals(650, SkinCatalog.priceFor("cyber_matrix"))
+        assertEquals(700, SkinCatalog.priceFor("sunset_synthwave"))
+        assertEquals(750, SkinCatalog.priceFor("royal_amethyst"))
+        assertEquals(800, SkinCatalog.priceFor("electric_volt"))
+
+        assertEquals(1200, SkinCatalog.priceFor("hologram_glitch"))
+        assertEquals(1500, SkinCatalog.priceFor("golden_flex"))
+        assertEquals(1800, SkinCatalog.priceFor("cosmic_nebula"))
+        assertEquals(2200, SkinCatalog.priceFor("dragon_inferno"))
+        assertEquals(3000, SkinCatalog.priceFor("quantum_singularity"))
     }
 }

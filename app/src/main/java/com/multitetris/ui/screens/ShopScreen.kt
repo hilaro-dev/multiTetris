@@ -58,21 +58,19 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.game.TetrominoType
 import com.multitetris.ui.skin.ClassicSkinRenderer
-import com.multitetris.ui.skin.GoldenFlexSkinRenderer
-import com.multitetris.ui.skin.HologramGlitchSkinRenderer
 import com.multitetris.ui.skin.NeonCyberSkinRenderer
-import com.multitetris.ui.skin.ObsidianMagmaSkinRenderer
-import com.multitetris.ui.skin.PixelCrystalSkinRenderer
 import com.multitetris.ui.skin.PlayerPalette
 import com.multitetris.ui.skin.SkinCatalog
 import com.multitetris.ui.skin.SkinCatalogItem
 import com.multitetris.ui.skin.SkinRenderer
+import com.multitetris.ui.skin.SkinTier
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
 import com.multitetris.ui.theme.ElevatedCard
@@ -96,14 +94,24 @@ fun ShopScreen(
     var pendingPurchaseItem by remember { mutableStateOf<SkinCatalogItem?>(null) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "shop_anim")
-    val animProgress by infiniteTransition.animateFloat(
+    val animPhaseMs by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 60_000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 60_000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shop_skin_clock"
+    )
+    val animTimeMillis = animPhaseMs.toLong()
+    val mythicPulse by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
+            animation = tween(durationMillis = 1600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
         ),
-        label = "shop_skin_progress"
+        label = "mythic_tier_pulse"
     )
 
     val equippedSkinId = selectedSkins[targetPlayerId]
@@ -225,13 +233,15 @@ fun ShopScreen(
                     val isUnlocked = item.renderer.skinId in unlockedSkins || item.priceCoins == 0
                     ShopSkinCard(
                         renderer = item.renderer,
+                        tier = item.tier,
                         priceCoins = item.priceCoins,
                         playerId = targetPlayerId,
                         isUnlocked = isUnlocked,
                         isEquipped = isUnlocked && item.renderer.skinId == equippedSkinId,
                         canAfford = coinBalance >= item.priceCoins,
                         accent = targetAccent,
-                        animProgress = animProgress,
+                        animTimeMillis = animTimeMillis,
+                        mythicPulse = mythicPulse,
                         onEquip = { onEquipSkin(targetPlayerId, item.renderer.skinId) },
                         onRequestPurchase = { pendingPurchaseItem = item }
                     )
@@ -318,18 +328,22 @@ private fun ShopTargetChip(
 @Composable
 private fun ShopSkinCard(
     renderer: SkinRenderer,
+    tier: SkinTier,
     priceCoins: Int,
     playerId: Int,
     isUnlocked: Boolean,
     isEquipped: Boolean,
     canAfford: Boolean,
     accent: Color,
-    animProgress: Float,
+    animTimeMillis: Long,
+    mythicPulse: Float,
     onEquip: () -> Unit,
     onRequestPurchase: () -> Unit
 ) {
-    val (rarityLabel, rarityColor) = remember(renderer.skinId) {
-        rarityForSkin(renderer.skinId)
+    val tierColor = when (tier) {
+        SkinTier.BASIC -> Color(0xFF8C9BB5)
+        SkinTier.RARE -> CyberCyan
+        SkinTier.MYTHIC -> lerp(ElectricGold, NeonMagenta, mythicPulse)
     }
 
     Card(
@@ -384,13 +398,15 @@ private fun ShopSkinCard(
                         val drawX = startX + (cell.x - minX) * cellSize
                         val drawY = startY + (cell.y - minY) * cellSize
                         with(renderer) {
-                            drawBlock(
+                            drawBlockCell(
                                 topLeft = Offset(drawX, drawY),
                                 size = Size(cellSize, cellSize),
+                                gridX = cell.x,
+                                gridY = cell.y,
                                 tetrominoType = TetrominoType.T,
                                 playerId = playerId,
                                 isGhost = false,
-                                animProgress = animProgress
+                                animTimeMillis = animTimeMillis
                             )
                         }
                     }
@@ -401,12 +417,12 @@ private fun ShopSkinCard(
                         .align(Alignment.TopStart)
                         .padding(6.dp),
                     shape = RoundedCornerShape(6.dp),
-                    color = rarityColor.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, rarityColor.copy(alpha = 0.55f))
+                    color = tierColor.copy(alpha = 0.18f),
+                    border = BorderStroke(1.dp, tierColor.copy(alpha = 0.72f))
                 ) {
                     Text(
-                        text = rarityLabel,
-                        color = rarityColor,
+                        text = tier.label,
+                        color = tierColor,
                         fontSize = 8.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 0.6.sp,
@@ -536,17 +552,5 @@ private fun ShopSkinCard(
                 }
             }
         }
-    }
-}
-
-private fun rarityForSkin(skinId: String): Pair<String, Color> {
-    return when (skinId) {
-        ClassicSkinRenderer.SKIN_ID -> "STARTER" to TextSecondary
-        NeonCyberSkinRenderer.SKIN_ID -> "RARE" to CyberCyan
-        PixelCrystalSkinRenderer.SKIN_ID -> "CRYSTAL" to Color(0xFF7CE8FF)
-        ObsidianMagmaSkinRenderer.SKIN_ID -> "EPIC" to Color(0xFFFF6D2A)
-        HologramGlitchSkinRenderer.SKIN_ID -> "MYTHIC" to NeonMagenta
-        GoldenFlexSkinRenderer.SKIN_ID -> "LEGENDARY" to ElectricGold
-        else -> "SKIN" to TextSecondary
     }
 }

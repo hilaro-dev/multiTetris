@@ -576,15 +576,16 @@ fun TetrisBoardCanvas(
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "board_fx")
-    val animProgress by infiniteTransition.animateFloat(
+    val animPhaseMs by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 1f,
+        targetValue = 60_000f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            animation = tween(durationMillis = 60_000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "skin_shimmer"
+        label = "skin_anim_clock"
     )
+    val animTimeMillis = animPhaseMs.toLong()
     val sabotagePulse by infiniteTransition.animateFloat(
         initialValue = 0.35f,
         targetValue = 1f,
@@ -667,13 +668,15 @@ fun TetrisBoardCanvas(
                 val cell = gameState.grid[r][c] ?: continue
                 val renderer = SkinRegistry.resolve(cell.skinId)
                 with(renderer) {
-                    drawBlock(
+                    drawBlockCell(
                         topLeft = Offset(c * cellW, r * cellH),
                         size = cellSize,
+                        gridX = c,
+                        gridY = r,
                         tetrominoType = cell.tetrominoType,
                         playerId = cell.playerId,
                         isGhost = false,
-                        animProgress = animProgress
+                        animTimeMillis = animTimeMillis
                     )
                 }
             }
@@ -685,13 +688,15 @@ fun TetrisBoardCanvas(
             for (cell in ghost.occupiedCells()) {
                 if (cell.x in 0 until cols && cell.y in 0 until rows) {
                     with(renderer) {
-                        drawBlock(
+                        drawBlockCell(
                             topLeft = Offset(cell.x * cellW, cell.y * cellH),
                             size = cellSize,
+                            gridX = cell.x,
+                            gridY = cell.y,
                             tetrominoType = ghost.tetrominoType,
                             playerId = ghost.playerId,
                             isGhost = true,
-                            animProgress = animProgress
+                            animTimeMillis = animTimeMillis
                         )
                     }
                 }
@@ -708,14 +713,16 @@ fun TetrisBoardCanvas(
                 if (cell.x in 0 until cols && cell.y in 0 until rows) {
                     val topLeft = Offset(cell.x * cellW, cell.y * cellH)
                     with(renderer) {
-                        drawBlock(
+                        drawBlockCell(
                             topLeft = topLeft,
                             size = cellSize,
+                            gridX = cell.x,
+                            gridY = cell.y,
                             tetrominoType = piece.tetrominoType,
                             playerId = piece.playerId,
                             isGhost = false,
                             isPausedOnPiece = piece.isPausedByPiece,
-                            animProgress = animProgress
+                            animTimeMillis = animTimeMillis
                         )
                     }
                     if (isFocused) {
