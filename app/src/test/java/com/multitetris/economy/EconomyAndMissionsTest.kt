@@ -131,13 +131,21 @@ class EconomyAndMissionsTest {
             mode = GameMode.VERSUS,
             versusSubMode = VersusSubMode.FREE_FOR_ALL,
             winnerPlayerId = 2,
+            playerPlacements = mapOf(2 to 1, 1 to 2, 3 to 3),
             playerLines = mapOf(1 to 1, 2 to 2, 3 to 0)
         )
         val ffaWinner = MatchRewardCalculator.calculate(ffa3State, localPlayerId = 2, isLocalTest = false, matchDurationMillis = 20_000L)
         assertEquals(85, ffaWinner.totalCoins) // 75 + 2*5
 
-        val ffaOther = MatchRewardCalculator.calculate(ffa3State, localPlayerId = 1, isLocalTest = false, matchDurationMillis = 20_000L)
-        assertEquals(35, ffaOther.totalCoins) // 30 + 1*5
+        val ffaSecond = MatchRewardCalculator.calculate(ffa3State, localPlayerId = 1, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(45, ffaSecond.totalCoins) // 40 + 1*5
+
+        val ffaThird = MatchRewardCalculator.calculate(ffa3State, localPlayerId = 3, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(20, ffaThird.totalCoins) // 20 + 0*5
+
+        val disconnectedState = ffa3State.copy(disconnectedPlayerIds = setOf(3))
+        val ffaDisconnected = MatchRewardCalculator.calculate(disconnectedState, localPlayerId = 3, isLocalTest = false, matchDurationMillis = 20_000L)
+        assertEquals(0, ffaDisconnected.totalCoins)
 
         val twoVTwoState = GameState(
             config = BoardConfig.forPlayerCount(4),

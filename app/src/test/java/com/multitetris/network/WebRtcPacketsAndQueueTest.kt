@@ -45,7 +45,12 @@ class WebRtcPacketsAndQueueTest {
                 level = 3,
                 mode = GameMode.VERSUS,
                 gameOverWinnerId = null,
-                sabotagedPlayerIds = setOf(2)
+                sabotagedPlayerIds = setOf(2),
+                eliminatedPlayerIds = setOf(3),
+                playerPlacements = mapOf(3 to 4),
+                blockedPlayerIds = setOf(4),
+                feedToastMessage = "P3 was eliminated!",
+                feedToastEventId = 7L
             )
         )
 
@@ -66,6 +71,11 @@ class WebRtcPacketsAndQueueTest {
                     assertEquals(original.level, decodedState.level)
                     assertEquals(original.mode, decodedState.mode)
                     assertEquals(original.sabotagedPlayerIds, decodedState.sabotagedPlayerIds)
+                    assertEquals(original.eliminatedPlayerIds, decodedState.eliminatedPlayerIds)
+                    assertEquals(original.playerPlacements, decodedState.playerPlacements)
+                    assertEquals(original.blockedPlayerIds, decodedState.blockedPlayerIds)
+                    assertEquals(original.feedToastMessage, decodedState.feedToastMessage)
+                    assertEquals(original.feedToastEventId, decodedState.feedToastEventId)
                 }
             }
         }

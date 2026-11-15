@@ -400,6 +400,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onPlayerAction(action: PlayerAction) {
         val currentGame = uiState.value.gameState
+        val targetPlayerId = uiState.value.controlledPlayerId
+        if (targetPlayerId in currentGame.eliminatedPlayerIds ||
+            targetPlayerId in currentGame.blockedPlayerIds
+        ) {
+            return
+        }
         if (!currentGame.isPaused && !currentGame.isGameOver) {
             when (action) {
                 PlayerAction.MOVE_LEFT,
@@ -409,7 +415,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 PlayerAction.HARD_DROP -> soundEngine.playHardDrop()
             }
         }
-        val targetPlayerId = uiState.value.controlledPlayerId
         currentController().dispatchAction(targetPlayerId, action)
     }
 

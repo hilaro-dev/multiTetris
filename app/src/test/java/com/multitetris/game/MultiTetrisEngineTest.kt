@@ -197,7 +197,7 @@ class MultiTetrisEngineTest {
     }
 
     @Test
-    fun coopMode_endsWhenAnySpawnZoneOverflows() {
+    fun coopMode_endsOnlyWhenAllSpawnZonesAreBlocked() {
         val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
         val config = BoardConfig(width = 10, height = 20, playerCount = 2)
 
@@ -220,10 +220,27 @@ class MultiTetrisEngineTest {
             )
         )
 
-        val endState = engine.stepPlayerDown(1)
+        val p1BlockedState = engine.stepPlayerDown(1)
+        assertFalse(p1BlockedState.isGameOver)
+        assertTrue(1 in p1BlockedState.blockedPlayerIds)
+
+        // Now block P2 as well -> Co-op ends!
+        val gridBothBlocked = p1BlockedState.grid.map { it.toMutableList() }.toMutableList()
+        for (r in 2 until 20) {
+            gridBothBlocked[r][6] = LockedCell(2, TetrominoType.O, "neon_cyber")
+            gridBothBlocked[r][7] = LockedCell(2, TetrominoType.O, "neon_cyber")
+        }
+        engine.setStateForTest(
+            p1BlockedState.copy(
+                grid = gridBothBlocked.map { it.toList() },
+                activePieces = mapOf(2 to p2.copy(y = 0))
+            )
+        )
+
+        val endState = engine.stepPlayerDown(2)
         assertTrue(endState.isGameOver)
         assertNull(endState.winnerPlayerId)
-        assertEquals(1, endState.topOutPlayerId)
+        assertEquals(2, endState.topOutPlayerId)
     }
 
     @Test
@@ -387,10 +404,143 @@ class MultiTetrisEngineTest {
                 )
             )
         )
-        val endState = engine.stepPlayerDown(3, currentTimeMillis = now + 200L)
+        val midState = engine.stepPlayerDown(3, currentTimeMillis = now + 200L)
+        assertFalse(midState.isGameOver)
+        assertTrue(3 in midState.eliminatedPlayerIds)
+        assertEquals(4, midState.placementFor(3))
+        assertNull(midState.activePieces[3])
+        assertNotNull(midState.activePieces[4])
+
+        // Now eliminate P4 (the last remaining Magenta player) -> Team Cyan wins!
+        val gridWithP4Overflow = midState.grid.map { it.toMutableList() }.toMutableList()
+        val p4Zone = config.spawnZoneFor(4)
+        for (r in 2 until 20) {
+            gridWithP4Overflow[r][p4Zone.columnRange.first] = LockedCell(4, TetrominoType.O, "golden_flex")
+            gridWithP4Overflow[r][p4Zone.columnRange.first + 1] = LockedCell(4, TetrominoType.O, "golden_flex")
+        }
+        engine.setStateForTest(
+            midState.copy(
+                grid = gridWithP4Overflow.map { it.toList() },
+                activePieces = midState.activePieces.toMutableMap().apply {
+                    put(4, p4.copy(y = 0))
+                }
+            )
+        )
+        val endState = engine.stepPlayerDown(4, currentTimeMillis = now + 400L)
         assertTrue(endState.isGameOver)
-        assertEquals(3, endState.topOutPlayerId)
+        assertEquals(4, endState.topOutPlayerId)
         assertEquals(TeamColor.CYAN, endState.winningTeam)
+        assertEquals(1, endState.placementFor(1))
+        assertEquals(1, endState.placementFor(2))
+    }
+
+    @Test
+    fun versusFfa3P_eliminatesPlayersSequentiallyUntilLastPlayerStands() {
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        val config = BoardConfig.forPlayerCount(3)
+        val grid = MutableList(20) { MutableList<LockedCell?>(config.width) { null } }
+        val p2Zone = config.spawnZoneFor(2)
+        for (r in 2 until 20) {
+            grid[r][p2Zone.columnRange.first] = LockedCell(2, TetrominoType.O, "neon_cyber")
+            grid[r][p2Zone.columnRange.first + 1] = LockedCell(2, TetrominoType.O, "neon_cyber")
+        }
+
+        val p1 = ActivePiece(1, TetrominoType.O, 0, x = config.spawnZoneFor(1).spawnX, y = 4, skinId = "classic")
+        val p2 = ActivePiece(2, TetrominoType.O, 0, x = p2Zone.spawnX, y = 0, skinId = "neon_cyber")
+        val p3 = ActivePiece(3, TetrominoType.O, 0, x = config.spawnZoneFor(3).spawnX, y = 4, skinId = "pixel_crystal")
+
+        engine.setStateForTest(
+            GameState(
+                config = config,
+                mode = GameMode.VERSUS,
+                versusSubMode = VersusSubMode.FREE_FOR_ALL,
+                grid = grid.map { it.toList() },
+                activePieces = mapOf(1 to p1, 2 to p2, 3 to p3),
+                nextPieces = mapOf(1 to TetrominoType.O, 2 to TetrominoType.O, 3 to TetrominoType.O),
+                playerScores = mapOf(1 to 100, 2 to 50, 3 to 80),
+                playerLines = mapOf(1 to 1, 2 to 0, 3 to 1)
+            )
+        )
+
+        val afterP2Out = engine.stepPlayerDown(2)
+        assertFalse(afterP2Out.isGameOver)
+        assertTrue(2 in afterP2Out.eliminatedPlayerIds)
+        assertEquals(3, afterP2Out.placementFor(2))
+        assertNull(afterP2Out.activePieces[2])
+
+        // Eliminate P3 -> P1 is the last survivor and wins with 1st place
+        val p3Zone = config.spawnZoneFor(3)
+        val grid2 = afterP2Out.grid.map { it.toMutableList() }.toMutableList()
+        for (r in 2 until 20) {
+            grid2[r][p3Zone.columnRange.first] = LockedCell(3, TetrominoType.O, "pixel_crystal")
+            grid2[r][p3Zone.columnRange.first + 1] = LockedCell(3, TetrominoType.O, "pixel_crystal")
+        }
+        engine.setStateForTest(
+            afterP2Out.copy(
+                grid = grid2.map { it.toList() },
+                activePieces = afterP2Out.activePieces.toMutableMap().apply {
+                    put(3, p3.copy(y = 0))
+                }
+            )
+        )
+        val endState = engine.stepPlayerDown(3)
+        assertTrue(endState.isGameOver)
+        assertEquals(1, endState.winnerPlayerId)
+        assertEquals(1, endState.placementFor(1))
+        assertEquals(2, endState.placementFor(3))
+        assertEquals(3, endState.placementFor(2))
+    }
+
+    @Test
+    fun coopMode_blockedPlayerRespawnsWhenTeammateClearsLineAndEndsOnlyWhenAllBlocked() {
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        val config = BoardConfig.forPlayerCount(2)
+        val grid = MutableList(20) { MutableList<LockedCell?>(config.width) { null } }
+        // Fill P1's spawn column so P1 gets blocked on lock
+        for (r in 2 until 20) {
+            grid[r][2] = LockedCell(1, TetrominoType.O, "classic")
+            grid[r][3] = LockedCell(1, TetrominoType.O, "classic")
+        }
+
+        val p1 = ActivePiece(1, TetrominoType.O, 0, x = 2, y = 0, skinId = "classic")
+        val p2 = ActivePiece(2, TetrominoType.O, 0, x = 6, y = 4, skinId = "neon_cyber")
+
+        engine.setStateForTest(
+            GameState(
+                config = config,
+                mode = GameMode.CO_OP,
+                grid = grid.map { it.toList() },
+                activePieces = mapOf(1 to p1, 2 to p2),
+                nextPieces = mapOf(1 to TetrominoType.O, 2 to TetrominoType.O),
+                playerScores = mapOf(1 to 0, 2 to 0),
+                playerLines = mapOf(1 to 0, 2 to 0)
+            )
+        )
+
+        val blockedState = engine.stepPlayerDown(1)
+        assertFalse(blockedState.isGameOver)
+        assertTrue(1 in blockedState.blockedPlayerIds)
+        assertNull(blockedState.activePieces[1])
+        assertNotNull(blockedState.activePieces[2])
+
+        // Prepare a board where P2 clears row 19 and row 0..1 of P1's spawn zone is now free
+        val respawnGrid = MutableList(20) { MutableList<LockedCell?>(config.width) { null } }
+        for (col in 0 until config.width) {
+            if (col !in 6..7) {
+                respawnGrid[19][col] = LockedCell(2, TetrominoType.I, "neon_cyber")
+            }
+        }
+        engine.setStateForTest(
+            blockedState.copy(
+                grid = respawnGrid.map { it.toList() },
+                activePieces = mapOf(2 to p2.copy(x = 6, y = 18))
+            )
+        )
+
+        val respawnedState = engine.stepPlayerDown(2)
+        assertFalse(respawnedState.isGameOver)
+        assertFalse(1 in respawnedState.blockedPlayerIds)
+        assertNotNull(respawnedState.activePieces[1])
     }
 
     @Test
@@ -423,5 +573,29 @@ class MultiTetrisEngineTest {
         assertTrue(endState.isGameOver)
         assertEquals(2, endState.topOutPlayerId)
         assertEquals(1, endState.winnerPlayerId)
+    }
+
+    @Test
+    fun versusFfa3P_guestDisconnectEliminatesPlayerAndEndsWhenLastOpponentLeaves() {
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        engine.startNewGame(
+            mode = GameMode.VERSUS,
+            config = BoardConfig.forPlayerCount(3),
+            versusSubMode = VersusSubMode.FREE_FOR_ALL
+        )
+
+        val afterP2Left = engine.markPlayerDisconnected(2, "GuestTwo")
+        assertFalse(afterP2Left.isGameOver)
+        assertTrue(2 in afterP2Left.disconnectedPlayerIds)
+        assertTrue(2 in afterP2Left.eliminatedPlayerIds)
+        assertEquals(3, afterP2Left.placementFor(2))
+        assertNull(afterP2Left.activePieces[2])
+        assertEquals("GuestTwo left the match", afterP2Left.feedToastMessage)
+
+        val afterP3Left = engine.markPlayerDisconnected(3, "GuestThree")
+        assertTrue(afterP3Left.isGameOver)
+        assertTrue(3 in afterP3Left.disconnectedPlayerIds)
+        assertEquals(1, afterP3Left.winnerPlayerId)
+        assertEquals(1, afterP3Left.placementFor(1))
     }
 }

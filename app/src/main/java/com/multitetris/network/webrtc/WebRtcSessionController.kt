@@ -66,6 +66,7 @@ class WebRtcSessionController(
 
     private var observerJob: Job? = null
     private var packetJob: Job? = null
+    private var peerLeftJob: Job? = null
     private var hostLoopJob: Job? = null
 
     private val _sessionState = MutableStateFlow(NetworkSessionState())
@@ -265,6 +266,8 @@ class WebRtcSessionController(
         observerJob = null
         packetJob?.cancel()
         packetJob = null
+        peerLeftJob?.cancel()
+        peerLeftJob = null
         signalingClient.close()
         currentRoom = null
     }
@@ -280,11 +283,16 @@ class WebRtcSessionController(
             signalingClient.signalState.collect { signal ->
                 when (signal) {
                     is WebRtcSignalState.Connected -> onPeerConnected(signal.room)
-                    is WebRtcSignalState.Disconnected -> onPeerDisconnected()
+                    is WebRtcSignalState.Disconnected -> onPeerDisconnected(signal.reason)
                     is WebRtcSignalState.TimeoutError -> {
                         hostLoopJob?.cancel()
                         hostLoopJob = null
-                        _sessionState.update { it.copy(status = ConnectionStatus.DISCONNECTED) }
+                        _sessionState.update {
+                            it.copy(
+                                status = ConnectionStatus.DISCONNECTED,
+                                disconnectMessage = signal.message
+                            )
+                        }
                     }
 
                     else -> Unit
@@ -298,6 +306,36 @@ class WebRtcSessionController(
                 handleIncomingPeerPacket(incoming)
             }
         }
+
+        peerLeftJob?.cancel()
+        peerLeftJob = scope.launch {
+            signalingClient.peerLeftEvents.collect { event ->
+                val room = currentRoom ?: return@collect
+                if (room.myRole != MatchRole.HOST) return@collect
+                val slotIndex = room.resolvedPlayers()
+                    .firstOrNull { it.uid == event.uid }
+                    ?.slotIndex
+                    ?: event.slotIndex
+                val displayName = syncedNames[slotIndex]
+                    ?: _sessionState.value.players.firstOrNull { it.playerId == slotIndex }?.displayName
+                _sessionState.update { session ->
+                    session.copy(
+                        players = session.players.map { endpoint ->
+                            if (endpoint.playerId == slotIndex) {
+                                endpoint.copy(isDisconnected = true)
+                            } else {
+                                endpoint
+                            }
+                        }
+                    )
+                }
+                val now = clockMillis()
+                val updated = synchronized(engineLock) {
+                    hostEngine.markPlayerDisconnected(slotIndex, displayName)
+                }
+                publishHostStateAndBroadcast(updated, now, forceSend = true)
+            }
+        }
     }
 
     private fun onPeerConnected(room: MatchRoom) {
@@ -308,7 +346,8 @@ class WebRtcSessionController(
             it.copy(
                 status = ConnectionStatus.CONNECTED,
                 controlledPlayerId = mySlot,
-                players = buildEndpointList(room)
+                players = buildEndpointList(room),
+                disconnectMessage = null
             )
         }
 
@@ -337,7 +376,7 @@ class WebRtcSessionController(
         }
     }
 
-    private fun onPeerDisconnected() {
+    private fun onPeerDisconnected(reason: String? = null) {
         hostLoopJob?.cancel()
         hostLoopJob = null
 
@@ -350,7 +389,16 @@ class WebRtcSessionController(
             _gameState.update { it.copy(isPaused = true) }
         }
 
-        _sessionState.update { it.copy(status = ConnectionStatus.DISCONNECTED) }
+        _sessionState.update {
+            it.copy(
+                status = ConnectionStatus.DISCONNECTED,
+                disconnectMessage = reason ?: if (currentRoom?.myRole == MatchRole.GUEST) {
+                    "Host left or disconnected."
+                } else {
+                    "All opponents left the match."
+                }
+            )
+        }
     }
 
     private fun handleIncomingPeerPacket(incoming: IncomingPeerPacket) {
@@ -427,7 +475,8 @@ class WebRtcSessionController(
                     PlayerEndpointState(
                         playerId = pid,
                         displayName = syncedNames[pid] ?: "Player $pid",
-                        isLocalController = pid == mySlot
+                        isLocalController = pid == mySlot,
+                        isDisconnected = pid in packet.disconnectedPlayerIds
                     )
                 }
                 _sessionState.update {
@@ -512,8 +561,18 @@ class WebRtcSessionController(
             .filter { id -> state.isSabotaged(id, now) }
             .toSet()
 
-        if (_sessionState.value.activeSabotagedPlayerIds != sabotaged) {
-            _sessionState.update { it.copy(activeSabotagedPlayerIds = sabotaged) }
+        val needsDisconnectedSync = _sessionState.value.players.any {
+            (it.playerId in state.disconnectedPlayerIds) != it.isDisconnected
+        }
+        if (_sessionState.value.activeSabotagedPlayerIds != sabotaged || needsDisconnectedSync) {
+            _sessionState.update { session ->
+                session.copy(
+                    activeSabotagedPlayerIds = sabotaged,
+                    players = session.players.map { endpoint ->
+                        endpoint.copy(isDisconnected = endpoint.playerId in state.disconnectedPlayerIds)
+                    }
+                )
+            }
         }
 
         if (forceSend) {

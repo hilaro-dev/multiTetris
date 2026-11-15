@@ -74,6 +74,11 @@ sealed interface WebRtcSignalState {
  * - Preserves Metered TURN relay configuration via WebRtcIceConfig and per-peer
  *   PendingIceCandidateQueue buffering prior to setRemoteDescription().
  */
+data class PeerLeftEvent(
+    val uid: String,
+    val slotIndex: Int
+)
+
 class WebRtcSignalingClient(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -100,6 +105,9 @@ class WebRtcSignalingClient(
     private val _peerIncomingPackets = MutableSharedFlow<IncomingPeerPacket>(extraBufferCapacity = 128)
     val peerIncomingPackets: SharedFlow<IncomingPeerPacket> = _peerIncomingPackets.asSharedFlow()
 
+    private val _peerLeftEvents = MutableSharedFlow<PeerLeftEvent>(extraBufferCapacity = 16)
+    val peerLeftEvents: SharedFlow<PeerLeftEvent> = _peerLeftEvents.asSharedFlow()
+
     private inner class PeerSlot(
         val peerUid: String,
         @Volatile var slotIndex: Int,
@@ -107,6 +115,7 @@ class WebRtcSignalingClient(
         val peerRef: DatabaseReference
     ) {
         val pendingIceQueue = PendingIceCandidateQueue<IceCandidate>()
+        @Volatile var leftNotified: Boolean = false
         @Volatile var peerConnection: PeerConnection? = null
         @Volatile var dataChannel: DataChannel? = null
         @Volatile var pcObserver: PeerConnection.Observer? = null
@@ -609,28 +618,20 @@ class WebRtcSignalingClient(
                         if (!isHostSide && _signalState.value is WebRtcSignalState.Connecting) {
                             triggerNatTimeoutOrFailure(slot.token, room)
                         } else if (!isHostSide && _signalState.value is WebRtcSignalState.Connected) {
-                            handleRemoteDisconnected(slot.token, "Host connection lost (ICE failed)")
+                            handleRemoteDisconnected(slot.token, "Host left or disconnected.")
                         } else if (isHostSide) {
                             _connectedPeerUids.update { it - slot.peerUid }
-                            if (_signalState.value is WebRtcSignalState.Connected &&
-                                _connectedPeerUids.value.isEmpty()
-                            ) {
-                                handleRemoteDisconnected(slot.token, "All players disconnected (ICE failed)")
-                            }
+                            notifyPeerLeftIfHost(slot)
                         }
                     }
 
                     PeerConnection.IceConnectionState.DISCONNECTED,
                     PeerConnection.IceConnectionState.CLOSED -> {
                         if (!isHostSide && _signalState.value is WebRtcSignalState.Connected) {
-                            handleRemoteDisconnected(slot.token, "Host disconnected")
+                            handleRemoteDisconnected(slot.token, "Host left or disconnected.")
                         } else if (isHostSide) {
                             _connectedPeerUids.update { it - slot.peerUid }
-                            if (_signalState.value is WebRtcSignalState.Connected &&
-                                _connectedPeerUids.value.isEmpty()
-                            ) {
-                                handleRemoteDisconnected(slot.token, "All players disconnected")
-                            }
+                            notifyPeerLeftIfHost(slot)
                         }
                     }
 
@@ -662,13 +663,10 @@ class WebRtcSignalingClient(
                     DataChannel.State.CLOSING,
                     DataChannel.State.CLOSED -> {
                         _connectedPeerUids.update { it - slot.peerUid }
-                        if (_signalState.value is WebRtcSignalState.Connected &&
-                            (!isHostSide || _connectedPeerUids.value.isEmpty())
-                        ) {
-                            handleRemoteDisconnected(
-                                slot.token,
-                                if (isHostSide) "All opponents left the match" else "Host closed the match"
-                            )
+                        if (isHostSide) {
+                            notifyPeerLeftIfHost(slot)
+                        } else if (_signalState.value is WebRtcSignalState.Connected) {
+                            handleRemoteDisconnected(slot.token, "Host left or disconnected.")
                         }
                     }
                     else -> Unit
@@ -783,6 +781,13 @@ class WebRtcSignalingClient(
                 message = WebRtcSignalState.FIREWALL_TIMEOUT_MESSAGE
             )
         }
+    }
+
+    private fun notifyPeerLeftIfHost(slot: PeerSlot) {
+        if (slot.leftNotified) return
+        if (_signalState.value !is WebRtcSignalState.Connected) return
+        slot.leftNotified = true
+        _peerLeftEvents.tryEmit(PeerLeftEvent(uid = slot.peerUid, slotIndex = slot.slotIndex))
     }
 
     private fun handleRemoteDisconnected(token: Long, reason: String) {

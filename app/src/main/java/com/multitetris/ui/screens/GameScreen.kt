@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -64,10 +66,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -80,6 +85,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -143,7 +149,9 @@ fun GameScreen(
     val focusAccent = PlayerPalette.accentFor(controlledPlayerId)
     val controlsEnabled = !gameState.isPaused &&
         !gameState.isGameOver &&
-        networkState.status != ConnectionStatus.DISCONNECTED
+        networkState.status != ConnectionStatus.DISCONNECTED &&
+        !gameState.isPlayerEliminated(controlledPlayerId) &&
+        !gameState.isPlayerBlocked(controlledPlayerId)
 
     if (playerCount >= 3) {
         LandscapeGameLayout(
@@ -534,9 +542,13 @@ private fun LandscapePlayerHudCard(
         showTeam && team == TeamColor.MAGENTA -> NeonMagenta
         else -> PlayerPalette.accentFor(playerId)
     }
-    val endpointName = networkState.players.firstOrNull { it.playerId == playerId }?.displayName
-        ?: "Player $playerId"
+    val endpoint = networkState.players.firstOrNull { it.playerId == playerId }
+    val endpointName = endpoint?.displayName ?: "Player $playerId"
     val isSabotaged = playerId in networkState.activeSabotagedPlayerIds
+    val isDisconnected = (endpoint?.isDisconnected == true) || gameState.isPlayerDisconnected(playerId)
+    val isEliminated = gameState.isPlayerEliminated(playerId) || isDisconnected
+    val isBlocked = gameState.isPlayerBlocked(playerId)
+    val placement = gameState.placementFor(playerId)
     val scoreText = if (gameState.mode == GameMode.CO_OP) {
         "Shared ${gameState.sharedScore}"
     } else {
@@ -549,10 +561,15 @@ private fun LandscapePlayerHudCard(
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
-        color = if (isFocused) accent.copy(alpha = 0.14f) else SlateSurface,
+        color = when {
+            isEliminated -> SlateSurface.copy(alpha = 0.55f)
+            isFocused -> accent.copy(alpha = 0.14f)
+            else -> SlateSurface
+        },
         border = BorderStroke(
-            width = if (isFocused || isSabotaged) 1.5.dp else 1.dp,
+            width = if (isFocused || isSabotaged || isEliminated) 1.5.dp else 1.dp,
             color = when {
+                isEliminated -> NeonMagenta.copy(alpha = 0.6f)
                 isSabotaged -> ElectricGold
                 isFocused -> accent
                 else -> SubtleBorder
@@ -571,33 +588,50 @@ private fun LandscapePlayerHudCard(
                 ) {
                     Text(
                         text = "P$playerId",
-                        color = accent,
+                        color = if (isEliminated) TextSecondary else accent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
                         text = endpointName,
-                        color = TextPrimary,
+                        color = if (isEliminated) TextSecondary else TextPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
+                        modifier = if (isDisconnected) Modifier.alpha(0.5f) else Modifier
                     )
                 }
                 Text(
-                    text = if (isSabotaged) "SPEED BURST!" else scoreText,
-                    color = if (isSabotaged) ElectricGold else TextSecondary,
+                    text = when {
+                        isDisconnected -> "Disconnected"
+                        isEliminated -> if (placement > 0) "OUT • #$placement" else "ELIMINATED"
+                        isBlocked -> "WAIT CLEAR"
+                        isSabotaged -> "SPEED BURST!"
+                        else -> scoreText
+                    },
+                    color = when {
+                        isEliminated -> NeonMagenta
+                        isBlocked -> ElectricGold
+                        isSabotaged -> ElectricGold
+                        else -> TextSecondary
+                    },
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1
                 )
             }
-            NextPiecePreviewCanvas(
-                tetrominoType = gameState.nextPieces[playerId],
-                playerId = playerId,
-                skinId = gameState.playerSkins[playerId] ?: GameState.defaultSkinForPlayer(playerId),
-                modifier = Modifier.size(28.dp)
-            )
+            if (isDisconnected) {
+                LeftBadgePill()
+            } else {
+                NextPiecePreviewCanvas(
+                    tetrominoType = gameState.nextPieces[playerId],
+                    playerId = playerId,
+                    skinId = gameState.playerSkins[playerId] ?: GameState.defaultSkinForPlayer(playerId),
+                    modifier = Modifier.size(28.dp)
+                )
+            }
         }
     }
 }
@@ -647,8 +681,103 @@ private fun BoardWithOverlays(
             }
         }
 
+        val isLocalEliminated = gameState.isPlayerEliminated(controlledPlayerId)
+        val isLocalBlocked = gameState.isPlayerBlocked(controlledPlayerId)
+
+        var visibleFeedToast by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(gameState.feedToastEventId) {
+            val raw = gameState.feedToastMessage
+            if (gameState.feedToastEventId > 0L && raw != null && raw.isNotBlank()) {
+                var resolved: String = raw
+                networkState.players.forEach { player ->
+                    val name = player.displayName
+                    if (!name.isNullOrBlank()) {
+                        resolved = resolved.replace("P${player.playerId}", name)
+                    }
+                }
+                visibleFeedToast = resolved
+                delay(2600L)
+                visibleFeedToast = null
+            }
+        }
+
+        if (!gameState.isGameOver && !gameState.isPaused && networkState.status != ConnectionStatus.DISCONNECTED) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp, start = 12.dp, end = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (isLocalEliminated) {
+                    val placement = gameState.placementFor(controlledPlayerId)
+                    val placementSuffix = if (placement > 0) " • #$placement" else ""
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = ObsidianBg.copy(alpha = 0.88f),
+                        border = BorderStroke(1.2.dp, NeonMagenta)
+                    ) {
+                        Text(
+                            text = "ELIMINATED$placementSuffix • SPECTATING",
+                            color = NeonMagenta,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.7.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                } else if (isLocalBlocked) {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = ObsidianBg.copy(alpha = 0.88f),
+                        border = BorderStroke(1.2.dp, ElectricGold)
+                    ) {
+                        Text(
+                            text = "BLOCKED — WAITING FOR CLEAR...",
+                            color = ElectricGold,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.6.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = visibleFeedToast != null,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    visibleFeedToast?.let { toastText ->
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = SlateSurface.copy(alpha = 0.92f),
+                            border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.7f))
+                        ) {
+                            Text(
+                                text = toastText,
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         if (networkState.status == ConnectionStatus.DISCONNECTED) {
-            DisconnectedOverlay(onReturnHome = onExitToHome)
+            DisconnectedOverlay(
+                message = networkState.disconnectMessage ?: if (networkState.sessionMode == SessionMode.CLIENT) {
+                    "Host left or disconnected."
+                } else {
+                    "All opponents left the match."
+                },
+                onReturnHome = onExitToHome
+            )
         } else if (gameState.isPaused && !gameState.isGameOver) {
             PauseOverlay(
                 onResume = onTogglePause,
@@ -658,6 +787,7 @@ private fun BoardWithOverlays(
         } else if (gameState.isGameOver) {
             GameOverOverlay(
                 gameState = gameState,
+                networkState = networkState,
                 matchReward = matchReward,
                 onPlayAgain = onRestart,
                 onExit = onExitToHome
@@ -808,6 +938,12 @@ private fun DualPlayerHud(
             isFocused = controlledPlayerId == 1,
             isPausedByPiece = gameState.activePieces[1]?.isPausedByPiece == true,
             isSabotaged = 1 in networkState.activeSabotagedPlayerIds,
+            isEliminated = gameState.isPlayerEliminated(1),
+            isBlocked = gameState.isPlayerBlocked(1),
+            isDisconnected = (networkState.players.firstOrNull { it.playerId == 1 }?.isDisconnected == true) ||
+                gameState.isPlayerDisconnected(1),
+            displayName = networkState.players.firstOrNull { it.playerId == 1 }?.displayName,
+            placement = gameState.placementFor(1),
             onClick = { onSelectPlayer(1) }
         )
 
@@ -859,6 +995,12 @@ private fun DualPlayerHud(
             isFocused = controlledPlayerId == 2,
             isPausedByPiece = gameState.activePieces[2]?.isPausedByPiece == true,
             isSabotaged = 2 in networkState.activeSabotagedPlayerIds,
+            isEliminated = gameState.isPlayerEliminated(2),
+            isBlocked = gameState.isPlayerBlocked(2),
+            isDisconnected = (networkState.players.firstOrNull { it.playerId == 2 }?.isDisconnected == true) ||
+                gameState.isPlayerDisconnected(2),
+            displayName = networkState.players.firstOrNull { it.playerId == 2 }?.displayName,
+            placement = gameState.placementFor(2),
             onClick = { onSelectPlayer(2) }
         )
     }
@@ -875,10 +1017,18 @@ private fun PlayerPreviewCard(
     isFocused: Boolean,
     isPausedByPiece: Boolean,
     isSabotaged: Boolean,
+    isEliminated: Boolean = false,
+    isBlocked: Boolean = false,
+    isDisconnected: Boolean = false,
+    displayName: String? = null,
+    placement: Int = 0,
     onClick: () -> Unit
 ) {
     val accent = PlayerPalette.accentFor(playerId)
+    val effectiveEliminated = isEliminated || isDisconnected
     val borderColor = when {
+        effectiveEliminated -> NeonMagenta
+        isBlocked -> ElectricGold
         isSabotaged -> ElectricGold
         isFocused -> accent
         else -> SubtleBorder
@@ -889,8 +1039,8 @@ private fun PlayerPreviewCard(
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        color = if (isFocused) accent.copy(alpha = 0.1f) else SlateSurface,
-        border = BorderStroke(if (isFocused || isSabotaged) 1.5.dp else 1.dp, borderColor)
+        color = if (isFocused && !isDisconnected) accent.copy(alpha = 0.1f) else SlateSurface,
+        border = BorderStroke(if (isFocused || isSabotaged || effectiveEliminated) 1.5.dp else 1.dp, borderColor)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -903,12 +1053,16 @@ private fun PlayerPreviewCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = "P$playerId",
-                        color = accent,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        text = displayName?.takeIf { it.isNotBlank() } ?: "P$playerId",
+                        color = if (isDisconnected) TextSecondary else accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
+                        modifier = if (isDisconnected) Modifier.alpha(0.5f) else Modifier
                     )
-                    if (isFocused) {
+                    if (isFocused && !isDisconnected) {
                         Text(
                             text = "ACTIVE",
                             color = accent,
@@ -919,29 +1073,56 @@ private fun PlayerPreviewCard(
                 }
                 Text(
                     text = when {
+                        isDisconnected -> "Disconnected"
+                        effectiveEliminated -> if (placement > 0) "OUT • #$placement" else "ELIMINATED"
+                        isBlocked -> "WAIT CLEAR"
                         isSabotaged -> "SPEED BURST!"
                         isPausedByPiece -> "WAIT PIECE"
                         score != null -> "$score pts"
                         else -> spawnColLabel
                     },
                     color = when {
+                        effectiveEliminated -> NeonMagenta
+                        isBlocked -> ElectricGold
                         isSabotaged -> ElectricGold
                         isPausedByPiece -> ElectricGold
                         else -> TextSecondary
                     },
                     fontSize = 10.sp,
-                    fontWeight = if (isSabotaged || isPausedByPiece) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (isSabotaged || isPausedByPiece || effectiveEliminated || isBlocked) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1
                 )
             }
 
-            NextPiecePreviewCanvas(
-                tetrominoType = nextType,
-                playerId = playerId,
-                skinId = skinId,
-                modifier = Modifier.size(36.dp)
-            )
+            if (isDisconnected) {
+                LeftBadgePill()
+            } else {
+                NextPiecePreviewCanvas(
+                    tetrominoType = nextType,
+                    playerId = playerId,
+                    skinId = skinId,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun LeftBadgePill() {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = NeonMagenta.copy(alpha = 0.16f),
+        border = BorderStroke(1.dp, NeonMagenta.copy(alpha = 0.7f))
+    ) {
+        Text(
+            text = "LEFT",
+            color = NeonMagenta,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 0.6.sp,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+        )
     }
 }
 
@@ -1351,6 +1532,7 @@ private fun PauseOverlay(
 @Composable
 private fun GameOverOverlay(
     gameState: GameState,
+    networkState: NetworkSessionState,
     matchReward: MatchRewardBreakdown?,
     onPlayAgain: () -> Unit,
     onExit: () -> Unit
@@ -1398,16 +1580,44 @@ private fun GameOverOverlay(
                 textAlign = TextAlign.Center
             )
         } else {
-            val summary = (1..gameState.config.playerCount).joinToString("  •  ") { pid ->
-                "P$pid: ${gameState.playerScores[pid] ?: 0}"
-            }
-            Text(
-                text = summary,
-                color = TextPrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
+            val rankedIds = (1..gameState.config.playerCount).sortedWith(
+                compareBy<Int> {
+                    val p = gameState.placementFor(it)
+                    if (p > 0) p else Int.MAX_VALUE
+                }.thenByDescending { gameState.playerScores[it] ?: 0 }
             )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                rankedIds.forEach { pid ->
+                    val endpoint = networkState.players.firstOrNull { it.playerId == pid }
+                    val isDisconnected = (endpoint?.isDisconnected == true) || gameState.isPlayerDisconnected(pid)
+                    val displayName = endpoint?.displayName?.takeIf { it.isNotBlank() } ?: "Player $pid"
+                    val placement = gameState.placementFor(pid)
+                    val rankPrefix = if (placement > 0) "#$placement  " else ""
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$rankPrefix$displayName",
+                            color = if (isDisconnected) TextSecondary else PlayerPalette.accentFor(pid),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
+                            modifier = if (isDisconnected) Modifier.alpha(0.5f) else Modifier
+                        )
+                        Text(
+                            text = if (isDisconnected) "Disconnected" else "${gameState.playerScores[pid] ?: 0} pts",
+                            color = if (isDisconnected) NeonMagenta else TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
 
         if (matchReward != null) {
@@ -1536,11 +1746,12 @@ private fun MatchRewardsCard(reward: MatchRewardBreakdown) {
 
 @Composable
 private fun DisconnectedOverlay(
+    message: String,
     onReturnHome: () -> Unit
 ) {
-    OverlayCard(title = "Opponent Disconnected", titleColor = ElectricGold) {
+    OverlayCard(title = "Match Disconnected", titleColor = ElectricGold) {
         Text(
-            text = "The WebRTC peer connection was closed or your opponent left the match.",
+            text = message,
             color = TextSecondary,
             fontSize = 12.sp,
             textAlign = TextAlign.Center

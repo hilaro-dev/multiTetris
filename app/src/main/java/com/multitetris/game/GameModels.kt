@@ -291,10 +291,24 @@ data class GameState(
     val winnerPlayerId: Int? = null,
     val winningTeam: TeamColor? = null,
     val topOutPlayerId: Int? = null,
+    val eliminatedPlayerIds: Set<Int> = emptySet(),
+    val playerPlacements: Map<Int, Int> = emptyMap(),
+    val blockedPlayerIds: Set<Int> = emptySet(),
+    val disconnectedPlayerIds: Set<Int> = emptySet(),
+    val feedToastMessage: String? = null,
+    val feedToastEventId: Long = 0L,
     val statusMessage: String? = null,
     val lastClearedRowIndices: List<Int> = emptyList(),
     val lineClearEventId: Long = 0L
 ) {
+    fun isPlayerEliminated(playerId: Int): Boolean = playerId in eliminatedPlayerIds
+
+    fun isPlayerBlocked(playerId: Int): Boolean = playerId in blockedPlayerIds
+
+    fun isPlayerDisconnected(playerId: Int): Boolean = playerId in disconnectedPlayerIds
+
+    fun placementFor(playerId: Int): Int = playerPlacements[playerId] ?: 0
+
     fun isSabotaged(playerId: Int, currentTimeMillis: Long): Boolean {
         val until = sabotageBurstUntilMillis[playerId] ?: 0L
         return mode == GameMode.VERSUS && currentTimeMillis < until

@@ -368,6 +368,10 @@ class MultiTetrisEngine(
                 val attackerTeam = state.playerTeams[piece.playerId] ?: TeamColor.NONE
                 for (zone in state.config.spawnZones) {
                     if (zone.playerId == piece.playerId) continue
+                    if (zone.playerId in state.eliminatedPlayerIds ||
+                        zone.playerId in state.blockedPlayerIds ||
+                        zone.playerId in state.disconnectedPlayerIds
+                    ) continue
                     val targetTeam = state.playerTeams[zone.playerId] ?: TeamColor.NONE
                     val isTeammate = state.versusSubMode == VersusSubMode.TEAMS_2V2 &&
                         attackerTeam != TeamColor.NONE &&
@@ -382,13 +386,6 @@ class MultiTetrisEngine(
                         )
                     }
                 }
-            }
-        }
-
-        // Check spawn zone overflow on row 0 first (catches both self-overflow and opponent-caused overflow)
-        val overflowedZone = state.config.spawnZones.firstOrNull { zone ->
-            zone.columnRange.any { col ->
-                col in 0 until state.config.width && clearedGrid[0][col] != null
             }
         }
 
@@ -407,22 +404,144 @@ class MultiTetrisEngine(
 
         val spawnBlockedByLocked = hasLockedOrBoundsCollision(clearedGrid, state.config, spawnedPiece)
 
-        val topOutPlayerId: Int? = when {
-            overflowedZone != null -> overflowedZone.playerId
-            spawnBlockedByLocked -> piece.playerId
-            else -> null
+        val updatedActive = state.activePieces.toMutableMap()
+        val updatedNext = state.nextPieces.toMutableMap()
+        if (spawnBlockedByLocked) {
+            updatedActive.remove(piece.playerId)
+        } else {
+            updatedActive[piece.playerId] = spawnedPiece
+            updatedNext[piece.playerId] = upcomingType
         }
 
-        if (topOutPlayerId != null) {
-            val updatedActive = state.activePieces.toMutableMap().apply { remove(piece.playerId) }
-            var winningTeam: TeamColor? = null
-            val winnerId: Int? = if (state.mode == GameMode.VERSUS) {
-                if (state.versusSubMode == VersusSubMode.TEAMS_2V2) {
-                    val losingTeam = state.playerTeams[topOutPlayerId] ?: TeamColor.NONE
-                    val resolvedTeam = when (losingTeam) {
-                        TeamColor.CYAN -> TeamColor.MAGENTA
-                        TeamColor.MAGENTA -> TeamColor.CYAN
-                        TeamColor.NONE -> {
+        val isRow0Blocked: (SpawnZone) -> Boolean = { zone ->
+            zone.columnRange.any { col ->
+                col in 0 until state.config.width && clearedGrid[0][col] != null
+            }
+        }
+
+        if (state.mode == GameMode.CO_OP) {
+            val newBlockedIds = state.blockedPlayerIds.toMutableSet()
+            var feedToast: String? = null
+
+            // Respawn blocked Co-op teammates if a line clear freed their spawn zone (never respawn disconnected players)
+            if (clearedCount > 0 && newBlockedIds.isNotEmpty()) {
+                for (blockedId in state.blockedPlayerIds) {
+                    if (blockedId in state.disconnectedPlayerIds) continue
+                    val zone = state.config.spawnZoneFor(blockedId)
+                    if (!isRow0Blocked(zone)) {
+                        val respawnType = updatedNext[blockedId] ?: drawFromBag(blockedId)
+                        val respawnPiece = ActivePiece(
+                            playerId = blockedId,
+                            tetrominoType = respawnType,
+                            rotation = 0,
+                            x = zone.spawnX,
+                            y = zone.spawnY,
+                            skinId = state.playerSkins[blockedId] ?: "classic"
+                        )
+                        if (!hasLockedOrBoundsCollision(clearedGrid, state.config, respawnPiece)) {
+                            newBlockedIds.remove(blockedId)
+                            updatedActive[blockedId] = respawnPiece
+                            updatedNext[blockedId] = drawFromBag(blockedId)
+                            feedToast = "P$blockedId is back in!"
+                        }
+                    }
+                }
+            }
+
+            for (zone in state.config.spawnZones) {
+                if (zone.playerId in newBlockedIds) continue
+                val pieceBlocked = zone.playerId == piece.playerId && spawnBlockedByLocked
+                if (isRow0Blocked(zone) || pieceBlocked) {
+                    newBlockedIds.add(zone.playerId)
+                    updatedActive.remove(zone.playerId)
+                    feedToast = "P${zone.playerId} blocked — Waiting for clear..."
+                }
+            }
+
+            val allBlocked = newBlockedIds.size >= state.config.playerCount || updatedActive.isEmpty()
+            val nextFeedEventId = if (feedToast != null) state.feedToastEventId + 1L else state.feedToastEventId
+            if (allBlocked) {
+                state = state.copy(
+                    grid = clearedGrid,
+                    activePieces = emptyMap(),
+                    ghostPieces = emptyMap(),
+                    nextPieces = updatedNext,
+                    sharedScore = newSharedScore,
+                    sharedLines = newSharedLines,
+                    level = newLevel,
+                    playerScores = newPlayerScores,
+                    playerLines = newPlayerLines,
+                    sabotageBurstUntilMillis = newSabotageUntil,
+                    lastSabotageEvent = newSabotageEvent,
+                    blockedPlayerIds = newBlockedIds,
+                    feedToastMessage = feedToast ?: state.feedToastMessage,
+                    feedToastEventId = nextFeedEventId,
+                    isGameOver = true,
+                    winnerPlayerId = null,
+                    winningTeam = null,
+                    topOutPlayerId = piece.playerId,
+                    statusMessage = "All players blocked! Co-op run ended at Level $newLevel.",
+                    lastClearedRowIndices = nextClearedRows,
+                    lineClearEventId = nextClearEventId
+                )
+                return state
+            }
+
+            val updatedState = state.copy(
+                grid = clearedGrid,
+                activePieces = updatedActive,
+                nextPieces = updatedNext,
+                sharedScore = newSharedScore,
+                sharedLines = newSharedLines,
+                level = newLevel,
+                playerScores = newPlayerScores,
+                playerLines = newPlayerLines,
+                sabotageBurstUntilMillis = newSabotageUntil,
+                lastSabotageEvent = newSabotageEvent,
+                blockedPlayerIds = newBlockedIds,
+                feedToastMessage = feedToast ?: state.feedToastMessage,
+                feedToastEventId = nextFeedEventId,
+                lastClearedRowIndices = nextClearedRows,
+                lineClearEventId = nextClearEventId
+            )
+            state = refreshPauseFlagsAndGhosts(updatedState)
+            return state
+        }
+
+        // VERSUS MODE (2P, 3P, 4P FFA & 4P 2v2 Teams)
+        val newEliminatedIds = state.eliminatedPlayerIds.toMutableSet()
+        val newPlacements = state.playerPlacements.toMutableMap()
+        val newlyEliminated = mutableListOf<Int>()
+        var feedToast: String? = null
+
+        for (zone in state.config.spawnZones) {
+            if (zone.playerId in newEliminatedIds) continue
+            val pieceBlocked = zone.playerId == piece.playerId && spawnBlockedByLocked
+            if (isRow0Blocked(zone) || pieceBlocked) {
+                newlyEliminated.add(zone.playerId)
+            }
+        }
+
+        if (newlyEliminated.isNotEmpty()) {
+            for (elimId in newlyEliminated) {
+                newEliminatedIds.add(elimId)
+                updatedActive.remove(elimId)
+                val aliveAfter = state.config.spawnZones.count { it.playerId !in newEliminatedIds }
+                newPlacements[elimId] = aliveAfter + 1
+                feedToast = "P$elimId was eliminated!"
+            }
+
+            val aliveZones = state.config.spawnZones.filter { it.playerId !in newEliminatedIds }
+            val nextFeedEventId = state.feedToastEventId + 1L
+
+            if (state.versusSubMode == VersusSubMode.TEAMS_2V2) {
+                val cyanAlive = aliveZones.any { state.playerTeams[it.playerId] == TeamColor.CYAN }
+                val magentaAlive = aliveZones.any { state.playerTeams[it.playerId] == TeamColor.MAGENTA }
+                if (!cyanAlive || !magentaAlive) {
+                    val resolvedTeam = when {
+                        cyanAlive && !magentaAlive -> TeamColor.CYAN
+                        magentaAlive && !cyanAlive -> TeamColor.MAGENTA
+                        else -> {
                             val cyanScore = newPlayerScores.entries.sumOf { (pid, s) ->
                                 if (state.playerTeams[pid] == TeamColor.CYAN) s else 0
                             }
@@ -432,40 +551,94 @@ class MultiTetrisEngine(
                             if (cyanScore >= magentaScore) TeamColor.CYAN else TeamColor.MAGENTA
                         }
                     }
-                    winningTeam = resolvedTeam
-                    state.config.spawnZones
+                    for (zone in state.config.spawnZones) {
+                        if (state.playerTeams[zone.playerId] == resolvedTeam) {
+                            newPlacements[zone.playerId] = 1
+                        }
+                    }
+                    val winnerId = state.config.spawnZones
                         .filter { state.playerTeams[it.playerId] == resolvedTeam }
                         .maxWithOrNull(
                             compareBy<SpawnZone> { newPlayerScores[it.playerId] ?: 0 }
                                 .thenByDescending { it.playerId }
                         )
                         ?.playerId
-                } else {
-                    state.config.spawnZones
-                        .filter { it.playerId != topOutPlayerId }
-                        .maxWithOrNull(
-                            compareBy<SpawnZone> { newPlayerScores[it.playerId] ?: 0 }
-                                .thenByDescending { it.playerId }
-                        )
-                        ?.playerId
+                    val lastElim = newlyEliminated.last()
+                    state = state.copy(
+                        grid = clearedGrid,
+                        activePieces = emptyMap(),
+                        ghostPieces = emptyMap(),
+                        nextPieces = updatedNext,
+                        sharedScore = newSharedScore,
+                        sharedLines = newSharedLines,
+                        level = newLevel,
+                        playerScores = newPlayerScores,
+                        playerLines = newPlayerLines,
+                        sabotageBurstUntilMillis = newSabotageUntil,
+                        lastSabotageEvent = newSabotageEvent,
+                        eliminatedPlayerIds = newEliminatedIds,
+                        playerPlacements = newPlacements,
+                        feedToastMessage = feedToast,
+                        feedToastEventId = nextFeedEventId,
+                        isGameOver = true,
+                        winnerPlayerId = winnerId,
+                        winningTeam = resolvedTeam,
+                        topOutPlayerId = lastElim,
+                        statusMessage = "${resolvedTeam.label} wins!",
+                        lastClearedRowIndices = nextClearedRows,
+                        lineClearEventId = nextClearEventId
+                    )
+                    return state
                 }
-            } else {
-                null
-            }
-            val message = if (state.mode == GameMode.VERSUS && winnerId != null) {
-                if (winningTeam != null) {
-                    "P$topOutPlayerId overflowed! ${winningTeam.label} wins!"
-                } else {
-                    "Player $topOutPlayerId spawn zone (${state.config.spawnZoneFor(topOutPlayerId).columnRange.first}-${state.config.spawnZoneFor(topOutPlayerId).columnRange.last}) overflowed! Player $winnerId wins!"
+            } else if (aliveZones.size <= 1) {
+                val lastSurvivor = aliveZones.firstOrNull()
+                if (lastSurvivor != null) {
+                    newPlacements[lastSurvivor.playerId] = 1
                 }
-            } else {
-                "Spawn zone blocked! Co-op run ended at Level $newLevel."
+                val winnerId = lastSurvivor?.playerId ?: state.config.spawnZones
+                    .filter { it.playerId != newlyEliminated.first() }
+                    .maxWithOrNull(
+                        compareBy<SpawnZone> { newPlayerScores[it.playerId] ?: 0 }
+                            .thenByDescending { it.playerId }
+                    )
+                    ?.playerId
+                val lastElim = newlyEliminated.last()
+                state = state.copy(
+                    grid = clearedGrid,
+                    activePieces = emptyMap(),
+                    ghostPieces = emptyMap(),
+                    nextPieces = updatedNext,
+                    sharedScore = newSharedScore,
+                    sharedLines = newSharedLines,
+                    level = newLevel,
+                    playerScores = newPlayerScores,
+                    playerLines = newPlayerLines,
+                    sabotageBurstUntilMillis = newSabotageUntil,
+                    lastSabotageEvent = newSabotageEvent,
+                    eliminatedPlayerIds = newEliminatedIds,
+                    playerPlacements = newPlacements,
+                    feedToastMessage = feedToast,
+                    feedToastEventId = nextFeedEventId,
+                    isGameOver = true,
+                    winnerPlayerId = winnerId,
+                    winningTeam = null,
+                    topOutPlayerId = lastElim,
+                    statusMessage = if (winnerId != null) {
+                        "Player $winnerId wins!"
+                    } else {
+                        "Match over!"
+                    },
+                    lastClearedRowIndices = nextClearedRows,
+                    lineClearEventId = nextClearEventId
+                )
+                return state
             }
 
-            state = state.copy(
+            // Match continues with remaining alive players/teams!
+            val updatedState = state.copy(
                 grid = clearedGrid,
                 activePieces = updatedActive,
-                ghostPieces = emptyMap(),
+                nextPieces = updatedNext,
                 sharedScore = newSharedScore,
                 sharedLines = newSharedLines,
                 level = newLevel,
@@ -473,22 +646,15 @@ class MultiTetrisEngine(
                 playerLines = newPlayerLines,
                 sabotageBurstUntilMillis = newSabotageUntil,
                 lastSabotageEvent = newSabotageEvent,
-                isGameOver = true,
-                winnerPlayerId = winnerId,
-                winningTeam = winningTeam,
-                topOutPlayerId = topOutPlayerId,
-                statusMessage = message,
+                eliminatedPlayerIds = newEliminatedIds,
+                playerPlacements = newPlacements,
+                feedToastMessage = feedToast,
+                feedToastEventId = nextFeedEventId,
                 lastClearedRowIndices = nextClearedRows,
                 lineClearEventId = nextClearEventId
             )
+            state = refreshPauseFlagsAndGhosts(updatedState)
             return state
-        }
-
-        val updatedActive = state.activePieces.toMutableMap().apply {
-            put(piece.playerId, spawnedPiece)
-        }
-        val updatedNext = state.nextPieces.toMutableMap().apply {
-            put(piece.playerId, upcomingType)
         }
 
         val updatedState = state.copy(
@@ -507,6 +673,151 @@ class MultiTetrisEngine(
         )
 
         state = refreshPauseFlagsAndGhosts(updatedState)
+        return state
+    }
+
+    /**
+     * Marks a non-host player as disconnected mid-match while preserving their roster slot.
+     * Clears their active falling piece, sets eliminated + disconnected flags, emits a feed toast,
+     * and re-evaluates Last-Standing / 2v2 / Co-op match-end conditions immediately.
+     */
+    fun markPlayerDisconnected(playerId: Int, displayName: String? = null): GameState {
+        if (state.isGameOver || playerId in state.disconnectedPlayerIds) {
+            return state
+        }
+        if (state.config.spawnZones.none { it.playerId == playerId }) {
+            return state
+        }
+
+        val newDisconnectedIds = state.disconnectedPlayerIds + playerId
+        val newEliminatedIds = state.eliminatedPlayerIds + playerId
+        val newBlockedIds = if (state.mode == GameMode.CO_OP) {
+            state.blockedPlayerIds + playerId
+        } else {
+            state.blockedPlayerIds
+        }
+        val updatedActive = state.activePieces.toMutableMap().apply { remove(playerId) }
+        val updatedGhosts = state.ghostPieces.toMutableMap().apply { remove(playerId) }
+        val label = displayName?.takeIf { it.isNotBlank() } ?: "P$playerId"
+        val feedToast = "$label left the match"
+        val nextFeedEventId = state.feedToastEventId + 1L
+
+        if (state.mode == GameMode.CO_OP) {
+            val allBlockedOrLeft = newBlockedIds.size >= state.config.playerCount || updatedActive.isEmpty()
+            state = if (allBlockedOrLeft) {
+                state.copy(
+                    activePieces = emptyMap(),
+                    ghostPieces = emptyMap(),
+                    blockedPlayerIds = newBlockedIds,
+                    eliminatedPlayerIds = newEliminatedIds,
+                    disconnectedPlayerIds = newDisconnectedIds,
+                    feedToastMessage = feedToast,
+                    feedToastEventId = nextFeedEventId,
+                    isGameOver = true,
+                    winnerPlayerId = null,
+                    winningTeam = null,
+                    topOutPlayerId = playerId,
+                    statusMessage = "All teammates left or blocked! Co-op run ended at Level ${state.level}."
+                )
+            } else {
+                refreshPauseFlagsAndGhosts(
+                    state.copy(
+                        activePieces = updatedActive,
+                        ghostPieces = updatedGhosts,
+                        blockedPlayerIds = newBlockedIds,
+                        eliminatedPlayerIds = newEliminatedIds,
+                        disconnectedPlayerIds = newDisconnectedIds,
+                        feedToastMessage = feedToast,
+                        feedToastEventId = nextFeedEventId
+                    )
+                )
+            }
+            return state
+        }
+
+        // VERSUS MODE (2P, 3P, 4P FFA & 4P 2v2 Teams)
+        val newPlacements = state.playerPlacements.toMutableMap()
+        if (playerId !in newPlacements) {
+            val aliveAfter = state.config.spawnZones.count { it.playerId !in newEliminatedIds }
+            newPlacements[playerId] = aliveAfter + 1
+        }
+        val aliveZones = state.config.spawnZones.filter { it.playerId !in newEliminatedIds }
+
+        if (state.versusSubMode == VersusSubMode.TEAMS_2V2) {
+            val cyanAlive = aliveZones.any { state.playerTeams[it.playerId] == TeamColor.CYAN }
+            val magentaAlive = aliveZones.any { state.playerTeams[it.playerId] == TeamColor.MAGENTA }
+            if (!cyanAlive || !magentaAlive) {
+                val resolvedTeam = when {
+                    cyanAlive && !magentaAlive -> TeamColor.CYAN
+                    magentaAlive && !cyanAlive -> TeamColor.MAGENTA
+                    else -> TeamColor.CYAN
+                }
+                for (zone in state.config.spawnZones) {
+                    if (state.playerTeams[zone.playerId] == resolvedTeam) {
+                        newPlacements[zone.playerId] = 1
+                    }
+                }
+                val winnerId = state.config.spawnZones
+                    .filter { state.playerTeams[it.playerId] == resolvedTeam }
+                    .maxWithOrNull(
+                        compareBy<SpawnZone> { state.playerScores[it.playerId] ?: 0 }
+                            .thenByDescending { it.playerId }
+                    )
+                    ?.playerId
+                state = state.copy(
+                    activePieces = emptyMap(),
+                    ghostPieces = emptyMap(),
+                    eliminatedPlayerIds = newEliminatedIds,
+                    disconnectedPlayerIds = newDisconnectedIds,
+                    playerPlacements = newPlacements,
+                    feedToastMessage = feedToast,
+                    feedToastEventId = nextFeedEventId,
+                    isGameOver = true,
+                    winnerPlayerId = winnerId,
+                    winningTeam = resolvedTeam,
+                    topOutPlayerId = playerId,
+                    statusMessage = "${resolvedTeam.label} wins!"
+                )
+                return state
+            }
+        } else if (aliveZones.size <= 1) {
+            val lastSurvivor = aliveZones.firstOrNull()
+            if (lastSurvivor != null) {
+                newPlacements[lastSurvivor.playerId] = 1
+            }
+            val winnerId = lastSurvivor?.playerId
+            state = state.copy(
+                activePieces = emptyMap(),
+                ghostPieces = emptyMap(),
+                eliminatedPlayerIds = newEliminatedIds,
+                disconnectedPlayerIds = newDisconnectedIds,
+                playerPlacements = newPlacements,
+                feedToastMessage = feedToast,
+                feedToastEventId = nextFeedEventId,
+                isGameOver = true,
+                winnerPlayerId = winnerId,
+                winningTeam = null,
+                topOutPlayerId = playerId,
+                statusMessage = if (winnerId != null) {
+                    "Player $winnerId wins!"
+                } else {
+                    "Match over!"
+                }
+            )
+            return state
+        }
+
+        state = refreshPauseFlagsAndGhosts(
+            state.copy(
+                activePieces = updatedActive,
+                ghostPieces = updatedGhosts,
+                eliminatedPlayerIds = newEliminatedIds,
+                disconnectedPlayerIds = newDisconnectedIds,
+                playerPlacements = newPlacements,
+                feedToastMessage = feedToast,
+                feedToastEventId = nextFeedEventId
+            )
+        )
         return state
     }
 

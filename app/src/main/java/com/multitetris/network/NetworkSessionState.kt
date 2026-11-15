@@ -28,7 +28,8 @@ data class PlayerEndpointState(
     val playerId: Int,
     val displayName: String,
     val isLocalController: Boolean,
-    val latencyMs: Int = 0
+    val latencyMs: Int = 0,
+    val isDisconnected: Boolean = false
 )
 
 /**
@@ -42,7 +43,8 @@ data class NetworkSessionState(
         PlayerEndpointState(playerId = 1, displayName = "Player 1", isLocalController = true),
         PlayerEndpointState(playerId = 2, displayName = "Player 2", isLocalController = true)
     ),
-    val activeSabotagedPlayerIds: Set<Int> = emptySet()
+    val activeSabotagedPlayerIds: Set<Int> = emptySet(),
+    val disconnectMessage: String? = null
 )
 
 interface GameSessionController {

@@ -894,7 +894,7 @@ class FirebaseSocialManager(
                         _socialState.update {
                             it.copy(
                                 matchmakingState = MatchmakingState.Idle,
-                                feedbackMessage = "Host closed the room"
+                                feedbackMessage = "Host left or disconnected."
                             )
                         }
                     }

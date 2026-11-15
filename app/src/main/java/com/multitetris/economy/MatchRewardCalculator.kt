@@ -18,6 +18,15 @@ object MatchRewardCalculator {
         isLocalTest: Boolean,
         matchDurationMillis: Long
     ): MatchRewardBreakdown {
+        if (gameState.isPlayerDisconnected(localPlayerId)) {
+            return MatchRewardBreakdown(
+                totalCoins = 0,
+                isHalfRateLocal = isLocalTest,
+                lines = emptyList(),
+                eligibilityReason = "Disconnected"
+            )
+        }
+
         val totalLinesInMatch = if (gameState.mode == GameMode.CO_OP) {
             gameState.sharedLines
         } else {
@@ -48,10 +57,13 @@ object MatchRewardCalculator {
                 VersusSubMode.FREE_FOR_ALL -> {
                     val isWinner = gameState.winnerPlayerId == localPlayerId
                     if (gameState.config.playerCount >= 3) {
-                        if (isWinner) {
-                            75 to "FFA Victory (${gameState.config.playerCount}P)"
-                        } else {
-                            30 to "FFA Runner-Up"
+                        val placement = gameState.playerPlacements[localPlayerId]
+                            ?: if (isWinner) 1 else 2
+                        when (placement) {
+                            1 -> 75 to "1st Place Victory (${gameState.config.playerCount}P)"
+                            2 -> 40 to "2nd Place (${gameState.config.playerCount}P)"
+                            3 -> 20 to "3rd Place (${gameState.config.playerCount}P)"
+                            else -> 20 to "${placement}th Place (${gameState.config.playerCount}P)"
                         }
                     } else {
                         if (isWinner) 60 to "Victory" else 25 to "Runner-up"

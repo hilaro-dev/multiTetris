@@ -95,7 +95,13 @@ data class GameStatePacket(
     val versusSubMode: String = VersusSubMode.FREE_FOR_ALL.name,
     val playerTeams: Map<Int, String> = emptyMap(),
     val winningTeam: String? = null,
-    val playerNames: Map<Int, String> = emptyMap()
+    val playerNames: Map<Int, String> = emptyMap(),
+    val eliminatedPlayerIds: Set<Int> = emptySet(),
+    val playerPlacements: Map<Int, Int> = emptyMap(),
+    val blockedPlayerIds: Set<Int> = emptySet(),
+    val disconnectedPlayerIds: Set<Int> = emptySet(),
+    val feedToastMessage: String? = null,
+    val feedToastEventId: Long = 0L
 ) : NetPacket {
 
     fun toClientGameState(
@@ -163,7 +169,13 @@ data class GameStatePacket(
             topOutPlayerId = topOutPlayerId,
             statusMessage = statusMessage,
             lastClearedRowIndices = lastClearedRowIndices,
-            lineClearEventId = lineClearEventId
+            lineClearEventId = lineClearEventId,
+            eliminatedPlayerIds = eliminatedPlayerIds,
+            playerPlacements = playerPlacements,
+            blockedPlayerIds = blockedPlayerIds,
+            disconnectedPlayerIds = disconnectedPlayerIds,
+            feedToastMessage = feedToastMessage,
+            feedToastEventId = feedToastEventId
         )
     }
 
@@ -206,7 +218,13 @@ data class GameStatePacket(
                 versusSubMode = state.versusSubMode.name,
                 playerTeams = state.playerTeams.mapValues { it.value.name },
                 winningTeam = state.winningTeam?.name,
-                playerNames = playerNames
+                playerNames = playerNames,
+                eliminatedPlayerIds = state.eliminatedPlayerIds,
+                playerPlacements = state.playerPlacements,
+                blockedPlayerIds = state.blockedPlayerIds,
+                disconnectedPlayerIds = state.disconnectedPlayerIds,
+                feedToastMessage = state.feedToastMessage,
+                feedToastEventId = state.feedToastEventId
             )
         }
     }
