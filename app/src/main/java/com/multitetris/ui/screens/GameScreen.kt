@@ -81,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -92,7 +93,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -270,6 +274,7 @@ fun GameScreen(
                 focusAccent = focusAccent,
                 isPaused = gameState.isPaused,
                 isMuted = isMuted,
+                mysteryEnabled = gameState.mysteryEnabled,
                 onToggleMute = onToggleMute,
                 onBack = onExitToHome,
                 onSwitchFocus = onSwitchFocus,
@@ -572,6 +577,7 @@ private fun LandscapeGameLayout(
                 focusAccent = focusAccent,
                 isPaused = gameState.isPaused,
                 isMuted = isMuted,
+                mysteryEnabled = gameState.mysteryEnabled,
                 onToggleMute = onToggleMute,
                 onBack = onExitToHome,
                 onSwitchFocus = onSwitchFocus,
@@ -1049,14 +1055,19 @@ private fun TopControlBar(
     onBack: () -> Unit,
     onSwitchFocus: () -> Unit,
     onTogglePause: () -> Unit,
-    onRestart: () -> Unit
+    onRestart: () -> Unit,
+    mysteryEnabled: Boolean = false
 ) {
     val isLocalMode = sessionMode == SessionMode.LOCAL_SIMULATION
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
         IconButton(
             onClick = onBack,
             modifier = Modifier.size(40.dp)
@@ -1153,6 +1164,24 @@ private fun TopControlBar(
                         tint = TextPrimary
                     )
                 }
+            }
+        }
+        }
+        if (mysteryEnabled) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color(0xFFA855F7).copy(alpha = 0.24f),
+                border = BorderStroke(1.dp, Color(0xFFA855F7).copy(alpha = 0.75f))
+            ) {
+                Text(
+                    text = "👻 MYSTERY MODE",
+                    color = TextPrimary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.9.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                )
             }
         }
     }
@@ -1476,6 +1505,8 @@ fun TetrisBoardCanvas(
         }
     }
 
+    val textMeasurer = rememberTextMeasurer()
+
     Canvas(modifier = modifier) {
         val cols = gameState.config.width
         val rows = gameState.config.height
@@ -1553,6 +1584,12 @@ fun TetrisBoardCanvas(
 
         // 2. Draw ghost pieces for all active players
         for (ghost in gameState.ghostPieces.values) {
+            if (gameState.mysteryEnabled && ghost.playerId == controlledPlayerId) {
+                val ownerPiece = gameState.activePieces[ghost.playerId]
+                if (ownerPiece != null && gameState.isPieceHiddenByMystery(ownerPiece)) {
+                    continue
+                }
+            }
             val renderer = SkinRegistry.resolve(ghost.skinId)
             for (cell in ghost.occupiedCells()) {
                 if (cell.x in 0 until cols && cell.y in 0 until rows) {
@@ -1574,11 +1611,16 @@ fun TetrisBoardCanvas(
 
         // 3. Draw active falling pieces for all players
         for (piece in gameState.activePieces.values) {
+            val isHiddenMystery = gameState.isPieceHiddenByMystery(piece)
+            if (piece.playerId == controlledPlayerId && isHiddenMystery) {
+                continue
+            }
             val renderer = SkinRegistry.resolve(piece.skinId)
             val isFocused = piece.playerId == controlledPlayerId
             val isSabotaged = piece.playerId in sabotagedPlayers
 
-            for (cell in piece.occupiedCells()) {
+            val occupied = piece.occupiedCells()
+            for (cell in occupied) {
                 if (cell.x in 0 until cols && cell.y in 0 until rows) {
                     val topLeft = Offset(cell.x * cellW, cell.y * cellH)
                     with(renderer) {
@@ -1616,6 +1658,30 @@ fun TetrisBoardCanvas(
                         )
                     }
                 }
+            }
+            if (piece.playerId != controlledPlayerId && isHiddenMystery && occupied.isNotEmpty()) {
+                val minX = occupied.minOf { it.x }
+                val maxX = occupied.maxOf { it.x }
+                val minY = occupied.minOf { it.y }
+                val centerX = ((minX + maxX + 1) / 2f) * cellW
+                val badgeY = (minY * cellH - cellH * 0.72f).coerceAtLeast(2f)
+                val badgeLayout = textMeasurer.measure(
+                    text = "👻",
+                    style = TextStyle(fontSize = 11.sp)
+                )
+                val pillW = badgeLayout.size.width + 6f
+                val pillH = badgeLayout.size.height + 2f
+                val pillLeft = (centerX - pillW / 2f).coerceIn(2f, size.width - pillW - 2f)
+                drawRoundRect(
+                    color = Color(0xCC121426),
+                    topLeft = Offset(pillLeft, badgeY),
+                    size = Size(pillW, pillH),
+                    cornerRadius = CornerRadius(6f, 6f)
+                )
+                drawText(
+                    textLayoutResult = badgeLayout,
+                    topLeft = Offset(pillLeft + 3f, badgeY + 1f)
+                )
             }
         }
 

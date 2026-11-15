@@ -48,7 +48,8 @@ class LocalSimulationSessionController(
         versusSubMode: VersusSubMode,
         playerTeams: Map<Int, TeamColor>,
         sabotageEnabled: Boolean,
-        equippedSabotages: Map<Int, List<SabotageType>>
+        equippedSabotages: Map<Int, List<SabotageType>>,
+        mysteryEnabled: Boolean
     ) {
         stop()
         val now = clockMillis()
@@ -65,7 +66,8 @@ class LocalSimulationSessionController(
                 versusSubMode = versusSubMode,
                 playerTeams = playerTeams,
                 sabotageEnabled = sabotageEnabled,
-                equippedSabotages = equippedSabotages
+                equippedSabotages = equippedSabotages,
+                mysteryEnabled = mysteryEnabled
             )
         }
 
@@ -172,6 +174,7 @@ class LocalSimulationSessionController(
                         current
                     } else {
                         var workingState = engine.tickSabotageAndCoopGlitch(TICK_INTERVAL_MS)
+                        workingState = engine.tickMysteryPieceTimers(TICK_INTERVAL_MS)
                         if (workingState != current) {
                             changed = true
                         }

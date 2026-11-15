@@ -47,7 +47,8 @@ data class PieceState(
     val x: Int,
     val y: Int,
     val skinId: String,
-    val isPausedByPiece: Boolean = false
+    val isPausedByPiece: Boolean = false,
+    val pieceAliveMs: Long = 0L
 ) {
     fun toActivePiece(): ActivePiece = ActivePiece(
         playerId = playerId,
@@ -56,7 +57,8 @@ data class PieceState(
         x = x,
         y = y,
         skinId = skinId,
-        isPausedByPiece = isPausedByPiece
+        isPausedByPiece = isPausedByPiece,
+        pieceAliveMs = pieceAliveMs
     )
 
     companion object {
@@ -67,7 +69,8 @@ data class PieceState(
             x = piece.x,
             y = piece.y,
             skinId = piece.skinId,
-            isPausedByPiece = piece.isPausedByPiece
+            isPausedByPiece = piece.isPausedByPiece,
+            pieceAliveMs = piece.pieceAliveMs
         )
     }
 }
@@ -119,7 +122,8 @@ data class GameStatePacket(
     val equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
     val usedSabotages: Map<Int, Set<SabotageType>> = emptyMap(),
     val activeSabotages: Map<Int, ActiveSabotageState> = emptyMap(),
-    val systemGlitchWarningActive: Boolean = false
+    val systemGlitchWarningActive: Boolean = false,
+    val mysteryEnabled: Boolean = false
 ) : NetPacket {
 
     fun toClientGameState(
@@ -198,7 +202,8 @@ data class GameStatePacket(
             equippedSabotages = equippedSabotages,
             usedSabotages = usedSabotages,
             activeSabotages = activeSabotages,
-            systemGlitchWarningActive = systemGlitchWarningActive
+            systemGlitchWarningActive = systemGlitchWarningActive,
+            mysteryEnabled = mysteryEnabled
         )
     }
 
@@ -252,7 +257,8 @@ data class GameStatePacket(
                 equippedSabotages = state.equippedSabotages,
                 usedSabotages = state.usedSabotages,
                 activeSabotages = state.activeSabotages,
-                systemGlitchWarningActive = state.systemGlitchWarningActive
+                systemGlitchWarningActive = state.systemGlitchWarningActive,
+                mysteryEnabled = state.mysteryEnabled
             )
         }
     }

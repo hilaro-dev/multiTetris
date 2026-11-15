@@ -36,7 +36,8 @@ class MultiTetrisEngine(
         versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
         playerTeams: Map<Int, TeamColor> = emptyMap(),
         sabotageEnabled: Boolean = false,
-        equippedSabotages: Map<Int, List<SabotageType>> = emptyMap()
+        equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
+        mysteryEnabled: Boolean = false
     ): GameState {
         playerBags.clear()
         coopGlitchElapsedMs = 0L
@@ -115,7 +116,8 @@ class MultiTetrisEngine(
             equippedSabotages = resolvedEquipped,
             usedSabotages = initialUsed,
             activeSabotages = emptyMap(),
-            systemGlitchWarningActive = false
+            systemGlitchWarningActive = false,
+            mysteryEnabled = mysteryEnabled
         )
 
         state = refreshPauseFlagsAndGhosts(initialState)
@@ -960,6 +962,30 @@ class MultiTetrisEngine(
             feedToastMessage = feedToast ?: state.feedToastMessage,
             feedToastEventId = if (feedToast != null) state.feedToastEventId + 1L else state.feedToastEventId
         )
+        return state
+    }
+
+    /**
+     * Advances elapsed lifetime on active falling pieces when Mystery Mode is enabled.
+     */
+    fun tickMysteryPieceTimers(deltaMs: Long): GameState {
+        if (!state.mysteryEnabled || state.isPaused || state.isGameOver || deltaMs <= 0L) {
+            return state
+        }
+        var changed = false
+        val updatedActive = state.activePieces.mapValues { (_, piece) ->
+            if (piece.pieceAliveMs < GameState.MYSTERY_VISIBLE_WINDOW_MS) {
+                changed = true
+                piece.copy(
+                    pieceAliveMs = (piece.pieceAliveMs + deltaMs)
+                        .coerceAtMost(GameState.MYSTERY_VISIBLE_WINDOW_MS)
+                )
+            } else {
+                piece
+            }
+        }
+        if (!changed) return state
+        state = state.copy(activePieces = updatedActive)
         return state
     }
 

@@ -76,14 +76,24 @@ object MatchRewardCalculator {
             val rawLineBonus = playerLines * 5
             val lineBonusCoins = if (isLocalTest) rawLineBonus / 2 else rawLineBonus
 
+            val baseTotal = placementCoins + lineBonusCoins
+            val mysteryBonus = if (gameState.mysteryEnabled && baseTotal > 0) {
+                kotlin.math.round(baseTotal * 0.25).toInt().coerceAtLeast(1)
+            } else {
+                0
+            }
+
             val breakdownLines = buildList {
                 add(MatchRewardLine(label = placementLabel, amount = placementCoins))
                 if (lineBonusCoins > 0) {
                     add(MatchRewardLine(label = "Line Bonus ($playerLines)", amount = lineBonusCoins))
                 }
+                if (mysteryBonus > 0) {
+                    add(MatchRewardLine(label = "Mystery Bonus (1.25x)", amount = mysteryBonus))
+                }
             }
             MatchRewardBreakdown(
-                totalCoins = placementCoins + lineBonusCoins,
+                totalCoins = baseTotal + mysteryBonus,
                 isHalfRateLocal = isLocalTest,
                 lines = breakdownLines
             )
@@ -94,15 +104,24 @@ object MatchRewardCalculator {
             val bonusBundles = gameState.sharedLines / 3
             val rawLineBonus = bonusBundles * 10
             val lineBonusCoins = if (isLocalTest) rawLineBonus / 2 else rawLineBonus
+            val baseTotal = baseCoins + lineBonusCoins
+            val mysteryBonus = if (gameState.mysteryEnabled && baseTotal > 0) {
+                kotlin.math.round(baseTotal * 0.25).toInt().coerceAtLeast(1)
+            } else {
+                0
+            }
 
             val breakdownLines = buildList {
                 add(MatchRewardLine(label = "Co-op Base", amount = baseCoins))
                 if (lineBonusCoins > 0) {
                     add(MatchRewardLine(label = "Line Bonus (${gameState.sharedLines}L)", amount = lineBonusCoins))
                 }
+                if (mysteryBonus > 0) {
+                    add(MatchRewardLine(label = "Mystery Bonus (1.25x)", amount = mysteryBonus))
+                }
             }
             MatchRewardBreakdown(
-                totalCoins = baseCoins + lineBonusCoins,
+                totalCoins = baseTotal + mysteryBonus,
                 isHalfRateLocal = isLocalTest,
                 lines = breakdownLines
             )

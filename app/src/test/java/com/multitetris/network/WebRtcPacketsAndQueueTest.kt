@@ -274,4 +274,27 @@ class WebRtcPacketsAndQueueTest {
         queue.enqueueOrDispatch("0:0:candC", "candC") { dispatched.add(it) }
         assertEquals(listOf("candA", "candB", "candC"), dispatched)
     }
+
+    @Test
+    fun gameStatePacket_preservesMysteryEnabledAndPieceAliveMs() {
+        val hostState = GameState(
+            config = BoardConfig.forPlayerCount(2),
+            mode = GameMode.CO_OP,
+            grid = List(20) { List<LockedCell?>(10) { null } },
+            activePieces = mapOf(
+                1 to ActivePiece(1, TetrominoType.T, 0, 2, 3, "classic", pieceAliveMs = 1_000L),
+                2 to ActivePiece(2, TetrominoType.L, 1, 6, 4, "neon_cyber", pieceAliveMs = 420L)
+            ),
+            mysteryEnabled = true
+        )
+        val packet = GameStatePacket.fromGameState(tick = 20L, state = hostState, nowMillis = 8_000L)
+        val decoded = NetPacketCodec.decode(NetPacketCodec.encode(packet)) as GameStatePacket
+        val clientState = decoded.toClientGameState(MultiTetrisEngine(), localClockMillis = 8_000L)
+
+        assertTrue(clientState.mysteryEnabled)
+        assertEquals(1_000L, clientState.activePieces[1]?.pieceAliveMs)
+        assertEquals(420L, clientState.activePieces[2]?.pieceAliveMs)
+        assertTrue(clientState.isPieceHiddenByMystery(clientState.activePieces[1]!!))
+        assertTrue(!clientState.isPieceHiddenByMystery(clientState.activePieces[2]!!))
+    }
 }

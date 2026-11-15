@@ -133,7 +133,8 @@ data class MatchRoom(
     val players: List<RoomPlayerSlot> = emptyList(),
     val versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
     val mySlotIndex: Int = if (myRole == MatchRole.HOST) 1 else 2,
-    val sabotageEnabled: Boolean = false
+    val sabotageEnabled: Boolean = false,
+    val mysteryEnabled: Boolean = false
 ) {
     fun resolvedPlayers(): List<RoomPlayerSlot> {
         if (players.isNotEmpty()) {

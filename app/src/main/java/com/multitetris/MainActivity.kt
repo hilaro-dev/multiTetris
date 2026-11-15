@@ -178,6 +178,7 @@ fun MultiTetrisApp(
                         onInviteFriend = gameViewModel::inviteFriendToRoom,
                         onSetVersusSubMode = gameViewModel::setRoomVersusSubMode,
                         onSetSabotageEnabled = gameViewModel::setRoomSabotageEnabled,
+                        onSetMysteryEnabled = gameViewModel::setRoomMysteryEnabled,
                         onToggleSabotage = gameViewModel::toggleMySabotageSelection,
                         onSwapPlayerTeam = gameViewModel::swapPlayerTeam,
                         onStartMatch = gameViewModel::startRoomMatch,

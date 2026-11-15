@@ -95,6 +95,7 @@ fun MatchLobbyScreen(
     onInviteFriend: (SavedFriend) -> Unit,
     onSetVersusSubMode: (VersusSubMode) -> Unit = {},
     onSetSabotageEnabled: (Boolean) -> Unit = {},
+    onSetMysteryEnabled: (Boolean) -> Unit = {},
     onToggleSabotage: (SabotageType) -> Unit = {},
     onSwapPlayerTeam: (String) -> Unit = {},
     onStartMatch: () -> Unit = {},
@@ -355,6 +356,13 @@ fun MatchLobbyScreen(
                 isHost = isHost,
                 isVersus = room.mode == GameMode.VERSUS,
                 onToggle = onSetSabotageEnabled
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+            MysteryModeToggleCard(
+                mysteryEnabled = room.mysteryEnabled,
+                isHost = isHost,
+                onToggle = onSetMysteryEnabled
             )
 
             // Versus Loadout Drafting (Pick 2 Sabotages, visible to all when Sabotage Mode is ON)
@@ -840,6 +848,73 @@ private fun SabotageModeToggleCard(
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = ObsidianBg,
                     checkedTrackColor = ElectricGold,
+                    uncheckedThumbColor = TextSecondary,
+                    uncheckedTrackColor = ElevatedCard
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun MysteryModeToggleCard(
+    mysteryEnabled: Boolean,
+    isHost: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    val mysteryViolet = Color(0xFFA855F7)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = SlateSurface,
+        border = BorderStroke(
+            width = if (mysteryEnabled) 1.2.dp else 1.dp,
+            color = if (mysteryEnabled) mysteryViolet.copy(alpha = 0.85f) else SubtleBorder
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.VisibilityOff,
+                    contentDescription = null,
+                    tint = if (mysteryEnabled) mysteryViolet else TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column {
+                    Text(
+                        text = "👻 Mystery Mode",
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = when {
+                            mysteryEnabled -> "ON • Pieces vanish after 1s (+25% Coins)"
+                            isHost -> "OFF • 1s spawn visibility & 1.25x Mystery Bonus"
+                            else -> "OFF • Host controls Mystery Mode"
+                        },
+                        color = if (mysteryEnabled) mysteryViolet else TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+            Switch(
+                checked = mysteryEnabled,
+                onCheckedChange = { if (isHost) onToggle(it) },
+                enabled = isHost,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = ObsidianBg,
+                    checkedTrackColor = mysteryViolet,
                     uncheckedThumbColor = TextSecondary,
                     uncheckedTrackColor = ElevatedCard
                 )

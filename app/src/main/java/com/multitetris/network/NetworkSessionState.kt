@@ -60,7 +60,8 @@ interface GameSessionController {
         versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
         playerTeams: Map<Int, TeamColor> = emptyMap(),
         sabotageEnabled: Boolean = false,
-        equippedSabotages: Map<Int, List<SabotageType>> = emptyMap()
+        equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
+        mysteryEnabled: Boolean = false
     )
 
     fun dispatchAction(playerId: Int, action: PlayerAction)

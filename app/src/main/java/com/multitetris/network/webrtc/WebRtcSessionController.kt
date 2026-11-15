@@ -165,7 +165,8 @@ class WebRtcSessionController(
         versusSubMode: VersusSubMode,
         playerTeams: Map<Int, TeamColor>,
         sabotageEnabled: Boolean,
-        equippedSabotages: Map<Int, List<com.multitetris.game.SabotageType>>
+        equippedSabotages: Map<Int, List<com.multitetris.game.SabotageType>>,
+        mysteryEnabled: Boolean
     ) {
         val room = currentRoom ?: return
         if (room.myRole != MatchRole.HOST) return
@@ -190,7 +191,8 @@ class WebRtcSessionController(
                 versusSubMode = versusSubMode,
                 playerTeams = playerTeams,
                 sabotageEnabled = sabotageEnabled,
-                equippedSabotages = resolvedEquipped
+                equippedSabotages = resolvedEquipped,
+                mysteryEnabled = mysteryEnabled
             )
         }
         publishHostStateAndBroadcast(initial, now, forceSend = true)
@@ -270,7 +272,8 @@ class WebRtcSessionController(
                 versusSubMode = room.versusSubMode,
                 playerTeams = teamsMap,
                 sabotageEnabled = room.sabotageEnabled,
-                equippedSabotages = syncedSabotages.toMap()
+                equippedSabotages = syncedSabotages.toMap(),
+                mysteryEnabled = room.mysteryEnabled
             )
         } else {
             lastReceivedTick = -1L
@@ -430,7 +433,8 @@ class WebRtcSessionController(
                 versusSubMode = room.versusSubMode,
                 playerTeams = teamsMap,
                 sabotageEnabled = room.sabotageEnabled,
-                equippedSabotages = syncedSabotages.toMap()
+                equippedSabotages = syncedSabotages.toMap(),
+                mysteryEnabled = room.mysteryEnabled
             )
         }
     }
@@ -589,7 +593,8 @@ class WebRtcSessionController(
                         versusSubMode = room.versusSubMode,
                         playerTeams = teamsMap,
                         sabotageEnabled = room.sabotageEnabled,
-                        equippedSabotages = syncedSabotages.toMap()
+                        equippedSabotages = syncedSabotages.toMap(),
+                        mysteryEnabled = room.mysteryEnabled
                     )
                 } else {
                     lastReceivedTick = -1L
@@ -619,6 +624,7 @@ class WebRtcSessionController(
                         current
                     } else {
                         var workingState = hostEngine.tickSabotageAndCoopGlitch(deltaMs)
+                        workingState = hostEngine.tickMysteryPieceTimers(deltaMs)
                         if (workingState != current) {
                             stateMutated = true
                         }

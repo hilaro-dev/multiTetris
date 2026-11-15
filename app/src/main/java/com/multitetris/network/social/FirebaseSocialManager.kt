@@ -837,6 +837,7 @@ class FirebaseSocialManager(
                     "mode" to room.mode.name,
                     "versusSubMode" to VersusSubMode.FREE_FOR_ALL.name,
                     "sabotageEnabled" to false,
+                    "mysteryEnabled" to false,
                     "state" to "lobby",
                     "createdAt" to ServerValue.TIMESTAMP,
                     "players" to mapOf(
@@ -924,6 +925,8 @@ class FirebaseSocialManager(
                     .getOrDefault(baseRoom.versusSubMode)
                 val sabotageEnabled = snapshot.child("sabotageEnabled").getValue(Boolean::class.java)
                     ?: baseRoom.sabotageEnabled
+                val mysteryEnabled = snapshot.child("mysteryEnabled").getValue(Boolean::class.java)
+                    ?: baseRoom.mysteryEnabled
                 val stateStr = snapshot.child("state").getValue(String::class.java) ?: baseRoom.state
 
                 val parsedPlayers = snapshot.child("players").children.mapNotNull { playerSnap ->
@@ -1013,7 +1016,8 @@ class FirebaseSocialManager(
                     players = effectivePlayers,
                     versusSubMode = subMode,
                     mySlotIndex = mySlot,
-                    sabotageEnabled = sabotageEnabled
+                    sabotageEnabled = sabotageEnabled,
+                    mysteryEnabled = mysteryEnabled
                 )
                 if (updatedRoom != currentFound?.room) {
                     _socialState.update { it.copy(matchmakingState = MatchmakingState.MatchFound(updatedRoom)) }
@@ -1139,6 +1143,17 @@ class FirebaseSocialManager(
         db.getReference("matches")
             .child(room.matchId)
             .child("sabotageEnabled")
+            .setValue(enabled)
+    }
+
+    fun setRoomMysteryEnabled(enabled: Boolean) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST) return
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("mysteryEnabled")
             .setValue(enabled)
     }
 

@@ -110,7 +110,8 @@ data class ActivePiece(
     val x: Int,
     val y: Int,
     val skinId: String,
-    val isPausedByPiece: Boolean = false
+    val isPausedByPiece: Boolean = false,
+    val pieceAliveMs: Long = 0L
 ) {
     fun occupiedCells(
         atX: Int = x,
@@ -304,8 +305,11 @@ data class GameState(
     val equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
     val usedSabotages: Map<Int, Set<SabotageType>> = emptyMap(),
     val activeSabotages: Map<Int, ActiveSabotageState> = emptyMap(),
-    val systemGlitchWarningActive: Boolean = false
+    val systemGlitchWarningActive: Boolean = false,
+    val mysteryEnabled: Boolean = false
 ) {
+    fun isPieceHiddenByMystery(piece: ActivePiece): Boolean =
+        mysteryEnabled && piece.pieceAliveMs >= MYSTERY_VISIBLE_WINDOW_MS
     fun isPlayerEliminated(playerId: Int): Boolean = playerId in eliminatedPlayerIds
 
     fun isPlayerBlocked(playerId: Int): Boolean = playerId in blockedPlayerIds
@@ -357,6 +361,8 @@ data class GameState(
     }
 
     companion object {
+        const val MYSTERY_VISIBLE_WINDOW_MS: Long = 1_000L
+
         private val DEFAULT_PLAYER_SKINS = listOf(
             "classic",
             "neon_cyber",

@@ -167,4 +167,42 @@ class EconomyAndMissionsTest {
         val teamLoseP3 = MatchRewardCalculator.calculate(twoVTwoState, localPlayerId = 3, isLocalTest = false, matchDurationMillis = 20_000L)
         assertEquals(35, teamLoseP3.totalCoins) // 30 + 1*5
     }
+
+    @Test
+    fun matchRewardCalculator_appliesMysteryBonusInVersusAndCoop() {
+        val versusMystery = GameState(
+            config = BoardConfig.forPlayerCount(2),
+            mode = GameMode.VERSUS,
+            versusSubMode = VersusSubMode.FREE_FOR_ALL,
+            winnerPlayerId = 1,
+            playerPlacements = mapOf(1 to 1, 2 to 2),
+            playerLines = mapOf(1 to 2, 2 to 0),
+            mysteryEnabled = true
+        )
+        // Base = 60 (win) + 10 (2 lines * 5) = 70; Mystery Bonus (1.25x) = round(70 * 0.25) = 18; Total = 88
+        val versusReward = MatchRewardCalculator.calculate(
+            gameState = versusMystery,
+            localPlayerId = 1,
+            isLocalTest = false,
+            matchDurationMillis = 20_000L
+        )
+        assertEquals(88, versusReward.totalCoins)
+        assertTrue(versusReward.lines.any { it.label == "Mystery Bonus (1.25x)" && it.amount == 18 })
+
+        val coopMystery = GameState(
+            config = BoardConfig.forPlayerCount(2),
+            mode = GameMode.CO_OP,
+            sharedLines = 4, // 4 / 3 = 1 bundle -> 10 line bonus + 20 base = 30
+            mysteryEnabled = true
+        )
+        // Base = 30; Mystery Bonus (1.25x) = round(30 * 0.25) = 8; Total = 38
+        val coopReward = MatchRewardCalculator.calculate(
+            gameState = coopMystery,
+            localPlayerId = 1,
+            isLocalTest = false,
+            matchDurationMillis = 20_000L
+        )
+        assertEquals(38, coopReward.totalCoins)
+        assertTrue(coopReward.lines.any { it.label == "Mystery Bonus (1.25x)" && it.amount == 8 })
+    }
 }

@@ -567,6 +567,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         socialManager.setRoomSabotageEnabled(enabled)
     }
 
+    fun setRoomMysteryEnabled(enabled: Boolean) {
+        socialManager.setRoomMysteryEnabled(enabled)
+    }
+
     fun toggleMySabotageSelection(sabotage: com.multitetris.game.SabotageType) {
         socialManager.toggleMySabotageSelection(sabotage)
     }

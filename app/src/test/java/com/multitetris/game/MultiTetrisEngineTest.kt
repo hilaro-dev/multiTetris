@@ -598,4 +598,34 @@ class MultiTetrisEngineTest {
         assertEquals(1, afterP3Left.winnerPlayerId)
         assertEquals(1, afterP3Left.placementFor(1))
     }
+
+    @Test
+    fun mysteryMode_pieceAliveMsAdvancesAndHidesAfterOneSecondAndResetsOnNextSpawn() {
+        val engine = MultiTetrisEngine(pieceBagOverride = { TetrominoType.O })
+        val started = engine.startNewGame(
+            mode = GameMode.CO_OP,
+            config = BoardConfig.forPlayerCount(2),
+            mysteryEnabled = true
+        )
+        assertTrue(started.mysteryEnabled)
+        val initialP1 = started.activePieces[1]!!
+        assertEquals(0L, initialP1.pieceAliveMs)
+        assertFalse(started.isPieceHiddenByMystery(initialP1))
+
+        val halfSecond = engine.tickMysteryPieceTimers(deltaMs = 600L)
+        val halfP1 = halfSecond.activePieces[1]!!
+        assertEquals(600L, halfP1.pieceAliveMs)
+        assertFalse(halfSecond.isPieceHiddenByMystery(halfP1))
+
+        val fullSecond = engine.tickMysteryPieceTimers(deltaMs = 500L)
+        val hiddenP1 = fullSecond.activePieces[1]!!
+        assertEquals(GameState.MYSTERY_VISIBLE_WINDOW_MS, hiddenP1.pieceAliveMs)
+        assertTrue(fullSecond.isPieceHiddenByMystery(hiddenP1))
+
+        // Hard drop locks current piece and spawns a fresh piece with pieceAliveMs = 0L
+        val afterDrop = engine.applyAction(1, PlayerAction.HARD_DROP)
+        val nextP1 = afterDrop.activePieces[1]!!
+        assertEquals(0L, nextP1.pieceAliveMs)
+        assertFalse(afterDrop.isPieceHiddenByMystery(nextP1))
+    }
 }
