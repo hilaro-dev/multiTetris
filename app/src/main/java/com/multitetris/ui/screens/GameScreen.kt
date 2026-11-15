@@ -37,7 +37,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
@@ -48,6 +50,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -96,6 +99,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.multitetris.economy.MatchRewardBreakdown
+import com.multitetris.economy.MatchRewardCalculator
 import com.multitetris.game.ActiveSabotageState
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
@@ -132,6 +136,7 @@ fun GameScreen(
     gameState: GameState,
     networkState: NetworkSessionState,
     matchReward: MatchRewardBreakdown? = null,
+    isNewCoopRecord: Boolean = false,
     isMuted: Boolean = false,
     onToggleMute: () -> Unit = {},
     onSwitchFocus: () -> Unit,
@@ -226,6 +231,7 @@ fun GameScreen(
             gameState = gameState,
             networkState = networkState,
             matchReward = matchReward,
+            isNewCoopRecord = isNewCoopRecord,
             controlledPlayerId = controlledPlayerId,
             focusAccent = focusAccent,
             controlsEnabled = controlsEnabled,
@@ -321,6 +327,7 @@ fun GameScreen(
                 gameState = gameState,
                 networkState = networkState,
                 matchReward = matchReward,
+                isNewCoopRecord = isNewCoopRecord,
                 controlledPlayerId = controlledPlayerId,
                 onTogglePause = onTogglePause,
                 onRestart = onRestart,
@@ -371,6 +378,7 @@ private fun LandscapeGameLayout(
     gameState: GameState,
     networkState: NetworkSessionState,
     matchReward: MatchRewardBreakdown?,
+    isNewCoopRecord: Boolean = false,
     controlledPlayerId: Int,
     focusAccent: Color,
     controlsEnabled: Boolean,
@@ -575,6 +583,7 @@ private fun LandscapeGameLayout(
                 gameState = gameState,
                 networkState = networkState,
                 matchReward = matchReward,
+                isNewCoopRecord = isNewCoopRecord,
                 controlledPlayerId = controlledPlayerId,
                 onTogglePause = onTogglePause,
                 onRestart = onRestart,
@@ -812,6 +821,7 @@ private fun BoardWithOverlays(
     gameState: GameState,
     networkState: NetworkSessionState,
     matchReward: MatchRewardBreakdown?,
+    isNewCoopRecord: Boolean = false,
     controlledPlayerId: Int,
     onTogglePause: () -> Unit,
     onRestart: () -> Unit,
@@ -1020,6 +1030,7 @@ private fun BoardWithOverlays(
                 gameState = gameState,
                 networkState = networkState,
                 matchReward = matchReward,
+                isNewCoopRecord = isNewCoopRecord,
                 onPlayAgain = onRestart,
                 onExit = onExitToHome
             )
@@ -2129,98 +2140,220 @@ private fun GameOverOverlay(
     gameState: GameState,
     networkState: NetworkSessionState,
     matchReward: MatchRewardBreakdown?,
+    isNewCoopRecord: Boolean = false,
     onPlayAgain: () -> Unit,
     onExit: () -> Unit
 ) {
     val winnerId = gameState.winnerPlayerId
     val winTeam = gameState.winningTeam
-    val isTwoVTwo = gameState.mode == GameMode.VERSUS && gameState.versusSubMode == VersusSubMode.TEAMS_2V2
+    val isTeamsMode = gameState.mode == GameMode.VERSUS && gameState.versusSubMode == VersusSubMode.TEAMS_2V2
+    val localPlayerId = networkState.controlledPlayerId
+    val isLocalTest = networkState.sessionMode == SessionMode.LOCAL_SIMULATION
+    val matchEligibleForCoins = matchReward == null || matchReward.lines.isNotEmpty()
+
     val title = when {
-        isTwoVTwo && winTeam != null -> "${winTeam.label.uppercase()} WINS!"
-        gameState.mode == GameMode.VERSUS && winnerId != null -> "PLAYER $winnerId WINS!"
+        isTeamsMode && winTeam != null -> "${winTeam.label.uppercase()} WINS!"
+        gameState.mode == GameMode.VERSUS && winnerId != null -> {
+            val winnerName = networkState.players.firstOrNull { it.playerId == winnerId }
+                ?.displayName
+                ?.takeIf { it.isNotBlank() }
+                ?: "PLAYER $winnerId"
+            "${winnerName.uppercase()} WINS!"
+        }
         else -> "GAME OVER"
     }
     val titleColor = when {
-        isTwoVTwo && winTeam == TeamColor.CYAN -> CyberCyan
-        isTwoVTwo && winTeam == TeamColor.MAGENTA -> NeonMagenta
+        isTeamsMode && winTeam == TeamColor.CYAN -> CyberCyan
+        isTeamsMode && winTeam == TeamColor.MAGENTA -> NeonMagenta
         winnerId != null -> PlayerPalette.accentFor(winnerId)
         else -> NeonMagenta
     }
+
+    val rankedIds = (1..gameState.config.playerCount).sortedWith(
+        compareBy<Int> { pid ->
+            val endpoint = networkState.players.firstOrNull { it.playerId == pid }
+            val isDisc = (endpoint?.isDisconnected == true) || gameState.isPlayerDisconnected(pid)
+            if (isDisc) 1 else 0
+        }.thenBy { pid ->
+            if (isTeamsMode && winTeam != null) {
+                if (gameState.playerTeams[pid] == winTeam) 0 else 1
+            } else {
+                0
+            }
+        }.thenBy { pid ->
+            if (gameState.mode == GameMode.VERSUS) {
+                val p = gameState.placementFor(pid)
+                when {
+                    p > 0 -> p
+                    pid == winnerId -> 1
+                    else -> Int.MAX_VALUE
+                }
+            } else {
+                0
+            }
+        }.thenByDescending { pid ->
+            if (gameState.mode == GameMode.CO_OP) gameState.playerLines[pid] ?: 0 else 0
+        }.thenByDescending { pid ->
+            gameState.playerScores[pid] ?: 0
+        }
+    )
 
     OverlayCard(title = title, titleColor = titleColor) {
         gameState.statusMessage?.let { msg ->
             Text(
                 text = msg,
                 color = TextSecondary,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
 
         if (gameState.mode == GameMode.CO_OP) {
-            Text(
-                text = "Score: ${gameState.sharedScore} • Lines: ${gameState.sharedLines} • Level ${gameState.level}",
-                color = TextPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-        } else if (isTwoVTwo) {
-            Text(
-                text = "Team Cyan: ${gameState.teamScore(TeamColor.CYAN)} pts  |  Team Magenta: ${gameState.teamScore(TeamColor.MAGENTA)} pts",
-                color = TextPrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-        } else {
-            val rankedIds = (1..gameState.config.playerCount).sortedWith(
-                compareBy<Int> {
-                    val p = gameState.placementFor(it)
-                    if (p > 0) p else Int.MAX_VALUE
-                }.thenByDescending { gameState.playerScores[it] ?: 0 }
-            )
-            Column(
+            // Prominent Co-op Team Summary Header
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = ElevatedCard),
+                border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.55f))
             ) {
-                rankedIds.forEach { pid ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (isNewCoopRecord) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = ElectricGold.copy(alpha = 0.2f),
+                            border = BorderStroke(1.dp, ElectricGold)
+                        ) {
+                            Text(
+                                text = "★ NEW BEST RECORD!",
+                                color = ElectricGold,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.7.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "${gameState.sharedScore} PTS",
+                        color = TextPrimary,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "${gameState.sharedLines} Lines Cleared • Level ${gameState.level}",
+                        color = CyberCyan,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        } else if (isTeamsMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Text(
+                    text = "CYAN: ${gameState.teamScore(TeamColor.CYAN)} pts",
+                    color = CyberCyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "MAGENTA: ${gameState.teamScore(TeamColor.MAGENTA)} pts",
+                    color = NeonMagenta,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+
+        // Structured Round Leaderboard Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = ElevatedCard),
+            border = BorderStroke(1.dp, SubtleBorder)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = if (gameState.mode == GameMode.CO_OP) "TEAM CONTRIBUTION" else "ROUND LEADERBOARD",
+                    color = TextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.9.sp
+                )
+
+                rankedIds.forEachIndexed { index, pid ->
                     val endpoint = networkState.players.firstOrNull { it.playerId == pid }
                     val isDisconnected = (endpoint?.isDisconnected == true) || gameState.isPlayerDisconnected(pid)
                     val displayName = endpoint?.displayName?.takeIf { it.isNotBlank() } ?: "Player $pid"
-                    val placement = gameState.placementFor(pid)
-                    val rankPrefix = if (placement > 0) "#$placement  " else ""
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "$rankPrefix$displayName",
-                            color = if (isDisconnected) TextSecondary else PlayerPalette.accentFor(pid),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
-                            modifier = if (isDisconnected) Modifier.alpha(0.5f) else Modifier
-                        )
-                        Text(
-                            text = if (isDisconnected) "Disconnected" else "${gameState.playerScores[pid] ?: 0} pts",
-                            color = if (isDisconnected) NeonMagenta else TextPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    val skinId = gameState.playerSkins[pid] ?: GameState.defaultSkinForPlayer(pid)
+                    val score = gameState.playerScores[pid] ?: 0
+                    val lines = gameState.playerLines[pid] ?: 0
+                    val team = gameState.playerTeams[pid] ?: TeamColor.NONE
+                    val explicitPlacement = gameState.placementFor(pid)
+                    val displayRank = when {
+                        isDisconnected -> 0
+                        gameState.mode == GameMode.CO_OP -> index + 1
+                        explicitPlacement > 0 -> explicitPlacement
+                        pid == winnerId -> 1
+                        else -> index + 1
                     }
+                    val coinsEarned = if (pid == localPlayerId && matchReward != null) {
+                        matchReward.totalCoins
+                    } else {
+                        MatchRewardCalculator.calculate(
+                            gameState = gameState,
+                            localPlayerId = pid,
+                            isLocalTest = isLocalTest,
+                            matchDurationMillis = if (matchEligibleForCoins) 15_000L else 0L
+                        ).totalCoins
+                    }
+
+                    RoundLeaderboardRow(
+                        playerId = pid,
+                        rank = displayRank,
+                        isCrown = !isDisconnected && (
+                            (gameState.mode == GameMode.VERSUS && (
+                                (isTeamsMode && winTeam != null && team == winTeam) ||
+                                    (!isTeamsMode && displayRank == 1)
+                                )) ||
+                                (gameState.mode == GameMode.CO_OP && index == 0)
+                            ),
+                        skinId = skinId,
+                        nickname = displayName,
+                        teamColor = if (isTeamsMode) team else TeamColor.NONE,
+                        score = score,
+                        linesCleared = lines,
+                        coinsEarned = if (gameState.mode == GameMode.VERSUS) coinsEarned else null,
+                        isLocalPlayer = pid == localPlayerId,
+                        isDisconnected = isDisconnected
+                    )
                 }
             }
         }
 
         if (matchReward != null) {
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             MatchRewardsCard(reward = matchReward)
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Button(
             onClick = onPlayAgain,
@@ -2236,6 +2369,147 @@ private fun GameOverOverlay(
             border = BorderStroke(1.dp, SubtleBorder)
         ) {
             Text("Back to Home", color = TextPrimary)
+        }
+    }
+}
+
+@Composable
+private fun RoundLeaderboardRow(
+    playerId: Int,
+    rank: Int,
+    isCrown: Boolean,
+    skinId: String,
+    nickname: String,
+    teamColor: TeamColor,
+    score: Int,
+    linesCleared: Int,
+    coinsEarned: Int?,
+    isLocalPlayer: Boolean,
+    isDisconnected: Boolean
+) {
+    val accent = PlayerPalette.accentFor(playerId)
+    val renderer = SkinRegistry.resolve(skinId)
+    val rowBg = when {
+        isLocalPlayer -> accent.copy(alpha = 0.14f)
+        isDisconnected -> SlateSurface.copy(alpha = 0.45f)
+        else -> SlateSurface.copy(alpha = 0.85f)
+    }
+    val rowBorder = when {
+        isLocalPlayer -> BorderStroke(1.2.dp, accent.copy(alpha = 0.8f))
+        else -> BorderStroke(1.dp, SubtleBorder.copy(alpha = 0.65f))
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = rowBg,
+        border = rowBorder
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Rank / Crown Badge
+            Box(
+                modifier = Modifier.width(26.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isCrown) {
+                    Icon(
+                        imageVector = Icons.Rounded.EmojiEvents,
+                        contentDescription = "Rank 1",
+                        tint = ElectricGold,
+                        modifier = Modifier.size(16.dp)
+                    )
+                } else {
+                    Text(
+                        text = if (isDisconnected) "OUT" else "#$rank",
+                        color = if (isDisconnected) NeonMagenta else TextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+
+            // Equipped Skin Mini Block
+            Canvas(
+                modifier = Modifier
+                    .size(18.dp)
+                    .alpha(if (isDisconnected) 0.45f else 1f)
+            ) {
+                with(renderer) {
+                    drawBlock(
+                        topLeft = Offset.Zero,
+                        size = Size(size.width, size.height),
+                        tetrominoType = TetrominoType.T,
+                        playerId = playerId,
+                        isGhost = false
+                    )
+                }
+            }
+
+            // Nickname + Optional Team Tag
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = nickname,
+                        color = if (isDisconnected) TextSecondary else TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textDecoration = if (isDisconnected) TextDecoration.LineThrough else null,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .then(if (isDisconnected) Modifier.alpha(0.55f) else Modifier)
+                    )
+                    if (teamColor != TeamColor.NONE) {
+                        val tagColor = if (teamColor == TeamColor.CYAN) CyberCyan else NeonMagenta
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = tagColor.copy(alpha = 0.18f),
+                            border = BorderStroke(0.8.dp, tagColor.copy(alpha = 0.7f))
+                        ) {
+                            Text(
+                                text = if (teamColor == TeamColor.CYAN) "CYAN" else "MAG",
+                                color = tagColor,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = if (isDisconnected) "Disconnected" else "$linesCleared lines • $score pts",
+                    color = if (isDisconnected) NeonMagenta else TextSecondary,
+                    fontSize = 10.sp,
+                    maxLines = 1
+                )
+            }
+
+            // Coins Earned (Versus) or Score Highlight (Co-op)
+            if (coinsEarned != null) {
+                Text(
+                    text = "+$coinsEarned",
+                    color = if (coinsEarned > 0) ElectricGold else TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            } else {
+                Text(
+                    text = "${score}p",
+                    color = accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
         }
     }
 }
@@ -2379,13 +2653,15 @@ private fun OverlayCard(
     ) {
         Card(
             modifier = Modifier
-                .fillMaxWidth(0.84f),
+                .fillMaxWidth(0.92f),
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = SlateSurface),
             border = BorderStroke(1.5.dp, titleColor.copy(alpha = 0.7f))
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(

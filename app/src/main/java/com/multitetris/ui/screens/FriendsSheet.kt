@@ -65,6 +65,7 @@ import com.multitetris.network.social.FriendLivePresence
 import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
+import com.multitetris.stats.FriendMatchStats
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
 import com.multitetris.ui.theme.ElectricGold
@@ -80,6 +81,7 @@ import com.multitetris.ui.theme.TextSecondary
 @Composable
 fun FriendsSheet(
     socialState: SocialUiState,
+    friendRivalry: Map<String, FriendMatchStats> = emptyMap(),
     onDismiss: () -> Unit,
     onUpdateNickname: (String) -> Unit,
     onAddFriendByCode: (String) -> Unit,
@@ -418,6 +420,7 @@ fun FriendsSheet(
                     ) { friendPresence ->
                         FriendRowItem(
                             presence = friendPresence,
+                            rivalryStats = friendRivalry[friendPresence.friend.uid],
                             onRemove = { onRemoveFriend(friendPresence.friend.uid) }
                         )
                     }
@@ -510,6 +513,7 @@ private fun PendingRequestRow(
 @Composable
 private fun FriendRowItem(
     presence: FriendLivePresence,
+    rivalryStats: FriendMatchStats? = null,
     onRemove: () -> Unit
 ) {
     val badgeColor = when (presence.state) {
@@ -559,6 +563,13 @@ private fun FriendRowItem(
                         text = "${presence.friend.friendCode} • ${renderer.displayName}",
                         color = TextSecondary,
                         fontSize = 11.sp
+                    )
+                    val hasRivalry = rivalryStats?.hasAnyMatches == true
+                    Text(
+                        text = rivalryStats?.formatRivalrySubtitle() ?: "No matches played yet",
+                        color = if (hasRivalry) CyberCyan.copy(alpha = 0.88f) else TextSecondary.copy(alpha = 0.72f),
+                        fontSize = 10.sp,
+                        fontWeight = if (hasRivalry) FontWeight.SemiBold else FontWeight.Normal
                     )
                 }
             }

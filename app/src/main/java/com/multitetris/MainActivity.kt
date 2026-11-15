@@ -132,6 +132,7 @@ fun MultiTetrisApp(
                     selectedSkins = uiState.selectedSkins,
                     socialState = uiState.socialState,
                     economyState = uiState.economyState,
+                    careerStats = uiState.careerStats,
                     onSelectMode = gameViewModel::setGameMode,
                     onOpenShop = {
                         navController.navigate(Routes.SHOP) {
@@ -193,6 +194,7 @@ fun MultiTetrisApp(
                     gameState = uiState.gameState,
                     networkState = uiState.networkState,
                     matchReward = uiState.lastMatchReward,
+                    isNewCoopRecord = uiState.isNewCoopRecord,
                     isMuted = uiState.isMuted,
                     onToggleMute = gameViewModel::toggleMute,
                     onSwitchFocus = gameViewModel::switchControlFocus,

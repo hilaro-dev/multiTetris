@@ -28,6 +28,10 @@ import com.multitetris.network.social.SocialUiState
 import com.multitetris.network.webrtc.MultiplayerSessionManager
 import com.multitetris.network.webrtc.WebRtcSessionController
 import com.multitetris.network.webrtc.WebRtcSignalState
+import com.multitetris.stats.CareerStatsSnapshot
+import com.multitetris.stats.MatchParticipantStat
+import com.multitetris.stats.MatchStatRecord
+import com.multitetris.stats.StatsRepository
 import com.multitetris.ui.skin.ClassicSkinRenderer
 import com.multitetris.ui.skin.NeonCyberSkinRenderer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,6 +55,8 @@ data class MultiTetrisUiState(
     val socialState: SocialUiState = SocialUiState(),
     val economyState: EconomyUiState = EconomyUiState(),
     val lastMatchReward: MatchRewardBreakdown? = null,
+    val careerStats: CareerStatsSnapshot = CareerStatsSnapshot(),
+    val isNewCoopRecord: Boolean = false,
     val webRtcSignalState: WebRtcSignalState = WebRtcSignalState.Idle,
     val connectedPeerUids: Set<String> = emptySet(),
     val isMultiplayerSession: Boolean = false,
@@ -67,6 +73,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         MultiplayerSessionManager.getInstance(application.applicationContext)
     private val socialManager = FirebaseSocialManager(application.applicationContext)
     private val economyRepository = EconomyRepository(application.applicationContext)
+    private val statsRepository = StatsRepository(application.applicationContext)
     private val soundEngine = RetroSoundEngine()
 
     private val _selectedMode = MutableStateFlow(GameMode.CO_OP)
@@ -79,6 +86,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _isMultiplayerSession = MutableStateFlow(false)
     private val _isMuted = MutableStateFlow(false)
     private val _lastMatchReward = MutableStateFlow<MatchRewardBreakdown?>(null)
+    private val _isNewCoopRecord = MutableStateFlow(false)
     private var connectedMatchId: String? = null
     private var lastPlayedClearEventId = 0L
     private var wasGameOver = false
@@ -102,6 +110,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         webRtcSessionController.signalState,
         webRtcSessionController.connectedPeerUids
     ) { signal, peers -> signal to peers }
+
+    private val statsCombinedFlow = combine(
+        statsRepository.stats,
+        _isNewCoopRecord
+    ) { stats, isNewCoop -> stats to isNewCoop }
 
     private val economyStateFlow = combine(
         economyRepository.coinBalance,
@@ -197,6 +210,50 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             isMultiplayer = isMultiplayer,
                             didLocalPlayerWin = didWin
                         )
+
+                        val socialSnapshot = socialManager.socialState.value
+                        val localUid = socialSnapshot.userProfile.uid
+                        val friendUids = socialSnapshot.friends
+                            .map { it.friend.uid }
+                            .filter { it.isNotBlank() }
+                            .toSet()
+                        val sessionPlayers = currentController().sessionState.value.players
+                        val roomPlayers = (socialSnapshot.matchmakingState as? MatchmakingState.MatchFound)
+                            ?.room
+                            ?.resolvedPlayers()
+                            .orEmpty()
+                        val participants = (1..game.config.playerCount).map { pid ->
+                            val endpoint = sessionPlayers.firstOrNull { it.playerId == pid }
+                            val uid = endpoint?.uid?.takeIf { it.isNotBlank() }
+                                ?: roomPlayers.firstOrNull { it.slotIndex == pid }?.uid.orEmpty()
+                            val isDisconnected = (endpoint?.isDisconnected == true) || game.isPlayerDisconnected(pid)
+                            val rawPlacement = game.placementFor(pid)
+                            val resolvedPlacement = if (rawPlacement == 0 && pid == game.winnerPlayerId) 1 else rawPlacement
+                            MatchParticipantStat(
+                                playerId = pid,
+                                uid = uid,
+                                team = game.playerTeams[pid] ?: TeamColor.NONE,
+                                placement = resolvedPlacement,
+                                score = game.playerScores[pid] ?: 0,
+                                linesCleared = game.playerLines[pid] ?: 0,
+                                isDisconnected = isDisconnected
+                            )
+                        }
+                        _isNewCoopRecord.value = statsRepository.recordCompletedMatch(
+                            MatchStatRecord(
+                                mode = game.mode,
+                                versusSubMode = game.versusSubMode,
+                                localPlayerId = localPlayerId,
+                                localUid = localUid,
+                                didLocalPlayerWin = didWin,
+                                winningTeam = game.winningTeam,
+                                sharedScore = game.sharedScore,
+                                sharedLines = game.sharedLines,
+                                matchDurationMs = durationMs,
+                                participants = participants,
+                                friendUids = friendUids
+                            )
+                        )
                     }
                 }
                 wasGameOver = game.isGameOver
@@ -225,7 +282,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _lastMatchReward,
         webRtcCombinedFlow,
         _isMultiplayerSession,
-        _isMuted
+        _isMuted,
+        statsCombinedFlow
     ) { values ->
         val mode = values[0] as GameMode
         @Suppress("UNCHECKED_CAST")
@@ -239,6 +297,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val rtcPair = values[7] as Pair<WebRtcSignalState, Set<String>>
         val isMultiplayer = values[8] as Boolean
         val isMuted = values[9] as Boolean
+        @Suppress("UNCHECKED_CAST")
+        val statsPair = values[10] as Pair<CareerStatsSnapshot, Boolean>
 
         val syncedSkins = if (!isMultiplayer &&
             social.userProfile.selectedSkinId.isNotBlank() &&
@@ -258,6 +318,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             socialState = social,
             economyState = economy,
             lastMatchReward = matchReward,
+            careerStats = statsPair.first,
+            isNewCoopRecord = statsPair.second,
             webRtcSignalState = rtcPair.first,
             connectedPeerUids = rtcPair.second,
             isMultiplayerSession = isMultiplayer,
@@ -274,6 +336,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         rewardGrantedForCurrentMatch = false
         lastRecordedLinesForMissions = 0
         _lastMatchReward.value = null
+        _isNewCoopRecord.value = false
     }
 
     private fun currentController(): GameSessionController {

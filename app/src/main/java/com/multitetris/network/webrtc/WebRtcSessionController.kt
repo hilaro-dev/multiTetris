@@ -152,7 +152,8 @@ class WebRtcSessionController(
                 playerId = slot.slotIndex,
                 displayName = syncedNames[slot.slotIndex] ?: slot.nickname.ifBlank { "Player ${slot.slotIndex}" },
                 isLocalController = (myUid.isNotBlank() && slot.uid == myUid) ||
-                    (slot.slotIndex == room.mySlotIndex)
+                    (slot.slotIndex == room.mySlotIndex),
+                uid = slot.uid
             )
         }
     }
@@ -557,12 +558,14 @@ class WebRtcSessionController(
                     packet.playerNames.forEach { (pid, name) -> syncedNames[pid] = name }
                 }
                 val mySlot = room.mySlotIndex.coerceIn(2, 4)
+                val roomPlayers = room.resolvedPlayers()
                 val refreshedEndpoints = (1..clientState.config.playerCount).map { pid ->
                     PlayerEndpointState(
                         playerId = pid,
                         displayName = syncedNames[pid] ?: "Player $pid",
                         isLocalController = pid == mySlot,
-                        isDisconnected = pid in packet.disconnectedPlayerIds
+                        isDisconnected = pid in packet.disconnectedPlayerIds,
+                        uid = roomPlayers.firstOrNull { it.slotIndex == pid }?.uid.orEmpty()
                     )
                 }
                 _sessionState.update {

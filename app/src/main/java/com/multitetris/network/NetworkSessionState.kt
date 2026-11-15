@@ -30,7 +30,8 @@ data class PlayerEndpointState(
     val displayName: String,
     val isLocalController: Boolean,
     val latencyMs: Int = 0,
-    val isDisconnected: Boolean = false
+    val isDisconnected: Boolean = false,
+    val uid: String = ""
 )
 
 /**

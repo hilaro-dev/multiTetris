@@ -175,6 +175,18 @@ class LocalProfileDataStore(private val context: Context) {
         }
     }
 
+    val careerStatsJsonFlow: Flow<String?> = context.multiTetrisSocialDataStore.data.map { prefs ->
+        prefs[KEY_CAREER_STATS_JSON]
+    }
+
+    suspend fun getCareerStatsJson(): String? = careerStatsJsonFlow.first()
+
+    suspend fun saveCareerStatsJson(rawJson: String) {
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_CAREER_STATS_JSON] = rawJson
+        }
+    }
+
     private fun decodeFriends(raw: String?): List<SavedFriend> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<SavedFriend>>(raw) }
@@ -190,5 +202,6 @@ class LocalProfileDataStore(private val context: Context) {
         private val KEY_COIN_BALANCE = intPreferencesKey("coin_balance")
         private val KEY_UNLOCKED_SKINS = stringSetPreferencesKey("unlocked_skins")
         private val KEY_DAILY_MISSIONS_JSON = stringPreferencesKey("daily_missions_json")
+        private val KEY_CAREER_STATS_JSON = stringPreferencesKey("career_stats_json")
     }
 }

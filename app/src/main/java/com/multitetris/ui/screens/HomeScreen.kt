@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.EmojiEvents
@@ -66,6 +67,7 @@ import com.multitetris.network.social.FriendRequest
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.PresenceState
 import com.multitetris.network.social.SocialUiState
+import com.multitetris.stats.CareerStatsSnapshot
 import com.multitetris.ui.skin.SkinCatalog
 import com.multitetris.ui.skin.SkinRegistry
 import com.multitetris.ui.theme.CyberCyan
@@ -84,6 +86,7 @@ fun HomeScreen(
     selectedSkins: Map<Int, String>,
     socialState: SocialUiState,
     economyState: EconomyUiState,
+    careerStats: CareerStatsSnapshot = CareerStatsSnapshot(),
     onSelectMode: (GameMode) -> Unit,
     onOpenShop: () -> Unit,
     onClaimMission: (String) -> Unit,
@@ -100,6 +103,7 @@ fun HomeScreen(
 ) {
     var showFriendsSheet by remember { mutableStateOf(false) }
     var showMissionsSheet by remember { mutableStateOf(false) }
+    var showStatsSheet by remember { mutableStateOf(false) }
 
     val onlineFriendsCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
     val searchingFriendsCount = socialState.friends.count { it.state == PresenceState.SEARCHING }
@@ -138,6 +142,7 @@ fun HomeScreen(
                     onRefreshMissions()
                     showMissionsSheet = true
                 },
+                onOpenStats = { showStatsSheet = true },
                 onOpenFriends = { showFriendsSheet = true }
             )
 
@@ -363,6 +368,7 @@ fun HomeScreen(
     if (showFriendsSheet) {
         FriendsSheet(
             socialState = socialState,
+            friendRivalry = careerStats.friendRivalry,
             onDismiss = { showFriendsSheet = false },
             onUpdateNickname = onUpdateNickname,
             onAddFriendByCode = onAddFriendByCode,
@@ -381,6 +387,13 @@ fun HomeScreen(
             onDismiss = { showMissionsSheet = false }
         )
     }
+
+    if (showStatsSheet) {
+        CareerStatsSheet(
+            stats = careerStats,
+            onDismiss = { showStatsSheet = false }
+        )
+    }
 }
 
 @Composable
@@ -394,6 +407,7 @@ private fun HomeTopBar(
     onOpenProfile: () -> Unit,
     onOpenShop: () -> Unit,
     onOpenMissions: () -> Unit,
+    onOpenStats: () -> Unit,
     onOpenFriends: () -> Unit
 ) {
     Row(
@@ -446,7 +460,7 @@ private fun HomeTopBar(
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             // Clickable Coin Balance Badge
             Surface(
@@ -485,6 +499,16 @@ private fun HomeTopBar(
                 showDot = hasClaimableMissions,
                 badgeCount = 0,
                 onClick = onOpenMissions
+            )
+
+            // Career Stats Icon Button
+            TopIconBadgeButton(
+                icon = Icons.Rounded.BarChart,
+                contentDescription = "Career Stats",
+                tint = NeonMagenta,
+                showDot = false,
+                badgeCount = 0,
+                onClick = onOpenStats
             )
 
             // Friends Icon Button with pending request/invite badge
