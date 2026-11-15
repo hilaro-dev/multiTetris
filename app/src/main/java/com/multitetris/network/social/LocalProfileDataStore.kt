@@ -3,6 +3,7 @@ package com.multitetris.network.social
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -28,6 +29,13 @@ data class LocalEconomySnapshot(
     val coinBalance: Int = EconomyUiState.DEFAULT_STARTING_COINS,
     val unlockedSkins: Set<String> = EconomyUiState.DEFAULT_UNLOCKED_SKINS,
     val dailyMissionsJson: String? = null
+)
+
+data class AppSettingsSnapshot(
+    val isDarkMode: Boolean = true,
+    val soundEnabled: Boolean = true,
+    val musicEnabled: Boolean = true,
+    val vibrationEnabled: Boolean = true
 )
 
 /**
@@ -187,6 +195,39 @@ class LocalProfileDataStore(private val context: Context) {
         }
     }
 
+    val settingsFlow: Flow<AppSettingsSnapshot> = context.multiTetrisSocialDataStore.data.map { prefs ->
+        AppSettingsSnapshot(
+            isDarkMode = prefs[KEY_DARK_MODE] ?: true,
+            soundEnabled = prefs[KEY_SOUND_ENABLED] ?: true,
+            musicEnabled = prefs[KEY_MUSIC_ENABLED] ?: true,
+            vibrationEnabled = prefs[KEY_VIBRATION_ENABLED] ?: true
+        )
+    }
+
+    suspend fun setDarkMode(enabled: Boolean) {
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_DARK_MODE] = enabled
+        }
+    }
+
+    suspend fun setSoundEnabled(enabled: Boolean) {
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_SOUND_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setMusicEnabled(enabled: Boolean) {
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_MUSIC_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setVibrationEnabled(enabled: Boolean) {
+        context.multiTetrisSocialDataStore.edit { prefs ->
+            prefs[KEY_VIBRATION_ENABLED] = enabled
+        }
+    }
+
     private fun decodeFriends(raw: String?): List<SavedFriend> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<SavedFriend>>(raw) }
@@ -203,5 +244,9 @@ class LocalProfileDataStore(private val context: Context) {
         private val KEY_UNLOCKED_SKINS = stringSetPreferencesKey("unlocked_skins")
         private val KEY_DAILY_MISSIONS_JSON = stringPreferencesKey("daily_missions_json")
         private val KEY_CAREER_STATS_JSON = stringPreferencesKey("career_stats_json")
+        private val KEY_DARK_MODE = booleanPreferencesKey("settings_dark_mode")
+        private val KEY_SOUND_ENABLED = booleanPreferencesKey("settings_sound_enabled")
+        private val KEY_MUSIC_ENABLED = booleanPreferencesKey("settings_music_enabled")
+        private val KEY_VIBRATION_ENABLED = booleanPreferencesKey("settings_vibration_enabled")
     }
 }

@@ -3,6 +3,8 @@ package com.multitetris.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.multitetris.audio.ChiptuneMusicPlayer
+import com.multitetris.audio.MusicTrack
 import com.multitetris.audio.RetroSoundEngine
 import com.multitetris.economy.EconomyRepository
 import com.multitetris.economy.EconomyUiState
@@ -19,8 +21,10 @@ import com.multitetris.game.VersusSubMode
 import com.multitetris.network.GameSessionController
 import com.multitetris.network.LocalSimulationSessionController
 import com.multitetris.network.NetworkSessionState
+import com.multitetris.network.social.AppSettingsSnapshot
 import com.multitetris.network.social.FirebaseSocialManager
 import com.multitetris.network.social.FriendRequest
+import com.multitetris.network.social.LocalProfileDataStore
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.RoomInvite
 import com.multitetris.network.social.SavedFriend
@@ -60,7 +64,11 @@ data class MultiTetrisUiState(
     val webRtcSignalState: WebRtcSignalState = WebRtcSignalState.Idle,
     val connectedPeerUids: Set<String> = emptySet(),
     val isMultiplayerSession: Boolean = false,
-    val isMuted: Boolean = false
+    val isMuted: Boolean = false,
+    val isDarkMode: Boolean = true,
+    val soundEnabled: Boolean = true,
+    val musicEnabled: Boolean = true,
+    val vibrationEnabled: Boolean = true
 ) {
     val controlledPlayerId: Int get() = networkState.controlledPlayerId
 }
@@ -74,7 +82,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val socialManager = FirebaseSocialManager(application.applicationContext)
     private val economyRepository = EconomyRepository(application.applicationContext)
     private val statsRepository = StatsRepository(application.applicationContext)
+    private val settingsDataStore = LocalProfileDataStore(application.applicationContext)
     private val soundEngine = RetroSoundEngine()
+    private val musicPlayer = ChiptuneMusicPlayer()
 
     private val _selectedMode = MutableStateFlow(GameMode.CO_OP)
     private val _selectedSkins = MutableStateFlow(
@@ -85,6 +95,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     )
     private val _isMultiplayerSession = MutableStateFlow(false)
     private val _isMuted = MutableStateFlow(false)
+    private val _settings = MutableStateFlow(AppSettingsSnapshot())
     private val _lastMatchReward = MutableStateFlow<MatchRewardBreakdown?>(null)
     private val _isNewCoopRecord = MutableStateFlow(false)
     private var connectedMatchId: String? = null
@@ -116,6 +127,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _isNewCoopRecord
     ) { stats, isNewCoop -> stats to isNewCoop }
 
+    private val audioAndSettingsFlow = combine(
+        _isMuted,
+        _settings
+    ) { muted, settings -> muted to settings }
+
     private val economyStateFlow = combine(
         economyRepository.coinBalance,
         economyRepository.unlockedSkins,
@@ -130,6 +146,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         socialManager.initialize(defaultSkinId = ClassicSkinRenderer.SKIN_ID)
+
+        viewModelScope.launch {
+            settingsDataStore.settingsFlow.collect { snapshot ->
+                _settings.value = snapshot
+                val muted = !snapshot.soundEnabled
+                _isMuted.value = muted
+                soundEngine.isMuted = muted
+                musicPlayer.setMuted(muted || !snapshot.musicEnabled)
+            }
+        }
 
         // Automatically start WebRTC P2P signaling when Stage 2/8 matchmaking creates/joins a room
         viewModelScope.launch {
@@ -155,6 +181,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         // Trigger retro synthesized SFX, match rewards, and daily mission progress
         viewModelScope.launch {
             activeGameStateFlow.collect { game ->
+                val highTensionRows = (game.config.height - 14).coerceAtLeast(1)
+                val stackHigh = game.grid.take(highTensionRows).any { row -> row.any { it != null } }
+                val turboActive = game.activeSabotages.values.any { it.type == SabotageType.TURBO_DROP }
+                musicPlayer.setHighTension(stackHigh || turboActive)
+
                 if (!game.isGameOver && wasGameOver) {
                     resetMatchTracking()
                 }
@@ -282,7 +313,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _lastMatchReward,
         webRtcCombinedFlow,
         _isMultiplayerSession,
-        _isMuted,
+        audioAndSettingsFlow,
         statsCombinedFlow
     ) { values ->
         val mode = values[0] as GameMode
@@ -296,7 +327,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         @Suppress("UNCHECKED_CAST")
         val rtcPair = values[7] as Pair<WebRtcSignalState, Set<String>>
         val isMultiplayer = values[8] as Boolean
-        val isMuted = values[9] as Boolean
+        @Suppress("UNCHECKED_CAST")
+        val audioSettingsPair = values[9] as Pair<Boolean, AppSettingsSnapshot>
+        val isMuted = audioSettingsPair.first
+        val settings = audioSettingsPair.second
         @Suppress("UNCHECKED_CAST")
         val statsPair = values[10] as Pair<CareerStatsSnapshot, Boolean>
 
@@ -323,7 +357,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             webRtcSignalState = rtcPair.first,
             connectedPeerUids = rtcPair.second,
             isMultiplayerSession = isMultiplayer,
-            isMuted = isMuted
+            isMuted = isMuted,
+            isDarkMode = settings.isDarkMode,
+            soundEnabled = settings.soundEnabled,
+            musicEnabled = settings.musicEnabled,
+            vibrationEnabled = settings.vibrationEnabled
         )
     }.stateIn(
         scope = viewModelScope,
@@ -516,9 +554,54 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleMute() {
-        val next = !_isMuted.value
-        _isMuted.value = next
-        soundEngine.isMuted = next
+        val nextMuted = !_isMuted.value
+        _isMuted.value = nextMuted
+        soundEngine.isMuted = nextMuted
+        musicPlayer.setMuted(nextMuted || !_settings.value.musicEnabled)
+        _settings.update { it.copy(soundEnabled = !nextMuted) }
+        viewModelScope.launch {
+            settingsDataStore.setSoundEnabled(!nextMuted)
+        }
+    }
+
+    fun setDarkMode(enabled: Boolean) {
+        _settings.update { it.copy(isDarkMode = enabled) }
+        viewModelScope.launch {
+            settingsDataStore.setDarkMode(enabled)
+        }
+    }
+
+    fun setSoundEnabled(enabled: Boolean) {
+        _settings.update { it.copy(soundEnabled = enabled) }
+        _isMuted.value = !enabled
+        soundEngine.isMuted = !enabled
+        musicPlayer.setMuted(!enabled || !_settings.value.musicEnabled)
+        viewModelScope.launch {
+            settingsDataStore.setSoundEnabled(enabled)
+        }
+    }
+
+    fun setMusicEnabled(enabled: Boolean) {
+        _settings.update { it.copy(musicEnabled = enabled) }
+        musicPlayer.setMuted(_isMuted.value || !enabled)
+        viewModelScope.launch {
+            settingsDataStore.setMusicEnabled(enabled)
+        }
+    }
+
+    fun setMusicTrack(track: MusicTrack) {
+        musicPlayer.setTrack(track)
+    }
+
+    fun setMusicLifecyclePaused(paused: Boolean) {
+        musicPlayer.setLifecyclePaused(paused)
+    }
+
+    fun setVibrationEnabled(enabled: Boolean) {
+        _settings.update { it.copy(vibrationEnabled = enabled) }
+        viewModelScope.launch {
+            settingsDataStore.setVibrationEnabled(enabled)
+        }
     }
 
     fun togglePause() {
@@ -612,5 +695,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         webRtcSessionController.stop()
         socialManager.shutdown()
         soundEngine.shutdown()
+        musicPlayer.release()
     }
 }

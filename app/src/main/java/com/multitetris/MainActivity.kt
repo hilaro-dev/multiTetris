@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,12 +39,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.multitetris.audio.MusicTrack
 import com.multitetris.network.social.MatchmakingState
 import com.multitetris.network.social.RoomInvite
 import com.multitetris.network.webrtc.WebRtcSignalState
@@ -64,9 +69,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MultiTetrisTheme {
-                MultiTetrisApp()
-            }
+            MultiTetrisApp()
         }
     }
 }
@@ -86,6 +89,32 @@ fun MultiTetrisApp(
     val uiState by gameViewModel.uiState.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, gameViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> gameViewModel.setMusicLifecyclePaused(true)
+                Lifecycle.Event.ON_RESUME,
+                Lifecycle.Event.ON_START -> gameViewModel.setMusicLifecyclePaused(false)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(currentRoute) {
+        val track = when (currentRoute) {
+            Routes.GAME -> MusicTrack.GAMEPLAY_KOROBEINIKI
+            Routes.HOME, Routes.SHOP, Routes.LOBBY, null -> MusicTrack.LOBBY_CHILL
+            else -> MusicTrack.LOBBY_CHILL
+        }
+        gameViewModel.setMusicTrack(track)
+    }
     val matchmakingState = uiState.socialState.matchmakingState
     val signalState = uiState.webRtcSignalState
     val pendingInvite = uiState.socialState.incomingRoomInvites.firstOrNull()
@@ -121,6 +150,7 @@ fun MultiTetrisApp(
         }
     }
 
+    MultiTetrisTheme(isDarkMode = uiState.isDarkMode) {
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
@@ -133,7 +163,15 @@ fun MultiTetrisApp(
                     socialState = uiState.socialState,
                     economyState = uiState.economyState,
                     careerStats = uiState.careerStats,
+                    isDarkMode = uiState.isDarkMode,
+                    soundEnabled = uiState.soundEnabled,
+                    musicEnabled = uiState.musicEnabled,
+                    vibrationEnabled = uiState.vibrationEnabled,
                     onSelectMode = gameViewModel::setGameMode,
+                    onSetDarkMode = gameViewModel::setDarkMode,
+                    onSetSoundEnabled = gameViewModel::setSoundEnabled,
+                    onSetMusicEnabled = gameViewModel::setMusicEnabled,
+                    onSetVibrationEnabled = gameViewModel::setVibrationEnabled,
                     onOpenShop = {
                         navController.navigate(Routes.SHOP) {
                             launchSingleTop = true
@@ -197,6 +235,7 @@ fun MultiTetrisApp(
                     matchReward = uiState.lastMatchReward,
                     isNewCoopRecord = uiState.isNewCoopRecord,
                     isMuted = uiState.isMuted,
+                    vibrationEnabled = uiState.vibrationEnabled,
                     onToggleMute = gameViewModel::toggleMute,
                     onSwitchFocus = gameViewModel::switchControlFocus,
                     onSelectFocusPlayer = gameViewModel::selectControlPlayer,
@@ -231,6 +270,7 @@ fun MultiTetrisApp(
                 )
             }
         }
+    }
     }
 }
 

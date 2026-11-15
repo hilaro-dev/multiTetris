@@ -48,6 +48,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,13 +116,18 @@ fun MatchLobbyScreen(
     val myUid = socialState.userProfile.uid
     val mySelectedSabotages = resolvedPlayers.firstOrNull { it.uid == myUid }?.selectedSabotages
         ?: SabotageConfig.defaultLoadout
+    var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(ObsidianBg, Color(0xFF0D1529), ObsidianBg)
+                    colors = listOf(
+                        ObsidianBg,
+                        if (com.multitetris.ui.theme.MultiTetrisPalette.isDark) Color(0xFF0D1529) else Color(0xFFE4ECF8),
+                        ObsidianBg
+                    )
                 )
             )
             .statusBarsPadding()
@@ -152,6 +161,13 @@ fun MatchLobbyScreen(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 1.sp
+                    )
+                    InfoIconButton(
+                        contentDescription = "${room.mode.label} Info",
+                        tint = modeAccent,
+                        iconSize = 14.dp,
+                        touchSize = 18.dp,
+                        onClick = { activeTooltip = GameInfoCatalog.forGameMode(room.mode) }
                     )
                 }
             }
@@ -285,12 +301,24 @@ fun MatchLobbyScreen(
                                         border = if (selected) null else BorderStroke(1.dp, SubtleBorder)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = subMode.label,
-                                                color = if (selected) Color.White else TextSecondary,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                fontSize = 12.sp
-                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = subMode.label,
+                                                    color = if (selected) Color.White else TextSecondary,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontSize = 12.sp
+                                                )
+                                                InfoIconButton(
+                                                    contentDescription = "${subMode.label} Info",
+                                                    tint = if (selected) Color.White else TextSecondary,
+                                                    iconSize = 14.dp,
+                                                    touchSize = 18.dp,
+                                                    onClick = { activeTooltip = GameInfoCatalog.forVersusSubMode(subMode) }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -344,6 +372,14 @@ fun MatchLobbyScreen(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            InfoIconButton(
+                                contentDescription = "${room.versusSubMode.label} Info",
+                                tint = modeAccent,
+                                iconSize = 14.dp,
+                                touchSize = 20.dp,
+                                onClick = { activeTooltip = GameInfoCatalog.forVersusSubMode(room.versusSubMode) }
+                            )
                         }
                     }
                 }
@@ -355,14 +391,16 @@ fun MatchLobbyScreen(
                 sabotageEnabled = room.sabotageEnabled,
                 isHost = isHost,
                 isVersus = room.mode == GameMode.VERSUS,
-                onToggle = onSetSabotageEnabled
+                onToggle = onSetSabotageEnabled,
+                onShowInfo = { activeTooltip = GameInfoCatalog.sabotageMode }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
             MysteryModeToggleCard(
                 mysteryEnabled = room.mysteryEnabled,
                 isHost = isHost,
-                onToggle = onSetMysteryEnabled
+                onToggle = onSetMysteryEnabled,
+                onShowInfo = { activeTooltip = GameInfoCatalog.mysteryMode }
             )
 
             // Versus Loadout Drafting (Pick 2 Sabotages, visible to all when Sabotage Mode is ON)
@@ -370,7 +408,8 @@ fun MatchLobbyScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 SabotageDraftChipBar(
                     selectedSabotages = mySelectedSabotages,
-                    onToggleSabotage = onToggleSabotage
+                    onToggleSabotage = onToggleSabotage,
+                    onShowSabotageInfo = { sab -> activeTooltip = GameInfoCatalog.forSabotage(sab) }
                 )
             }
 
@@ -526,6 +565,13 @@ fun MatchLobbyScreen(
                 }
             }
         }
+    }
+
+    activeTooltip?.let { tooltip ->
+        InfoTooltipDialog(
+            info = tooltip,
+            onDismiss = { activeTooltip = null }
+        )
     }
 
     if (signalState is WebRtcSignalState.TimeoutError) {
@@ -791,7 +837,8 @@ private fun SabotageModeToggleCard(
     sabotageEnabled: Boolean,
     isHost: Boolean,
     isVersus: Boolean,
-    onToggle: (Boolean) -> Unit
+    onToggle: (Boolean) -> Unit,
+    onShowInfo: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -821,12 +868,24 @@ private fun SabotageModeToggleCard(
                     modifier = Modifier.size(18.dp)
                 )
                 Column {
-                    Text(
-                        text = "Sabotage Mode",
-                        color = TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Sabotage Mode",
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        InfoIconButton(
+                            contentDescription = "Sabotage Mode Info",
+                            tint = if (sabotageEnabled) ElectricGold else TextSecondary,
+                            iconSize = 14.dp,
+                            touchSize = 18.dp,
+                            onClick = onShowInfo
+                        )
+                    }
                     Text(
                         text = when {
                             !isVersus && sabotageEnabled -> "ON • Rogue AI triggers random System Glitches every 22s"
@@ -860,7 +919,8 @@ private fun SabotageModeToggleCard(
 private fun MysteryModeToggleCard(
     mysteryEnabled: Boolean,
     isHost: Boolean,
-    onToggle: (Boolean) -> Unit
+    onToggle: (Boolean) -> Unit,
+    onShowInfo: () -> Unit
 ) {
     val mysteryViolet = Color(0xFFA855F7)
     Surface(
@@ -891,12 +951,24 @@ private fun MysteryModeToggleCard(
                     modifier = Modifier.size(18.dp)
                 )
                 Column {
-                    Text(
-                        text = "👻 Mystery Mode",
-                        color = TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "👻 Mystery Mode",
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        InfoIconButton(
+                            contentDescription = "Mystery Mode Info",
+                            tint = if (mysteryEnabled) mysteryViolet else TextSecondary,
+                            iconSize = 14.dp,
+                            touchSize = 18.dp,
+                            onClick = onShowInfo
+                        )
+                    }
                     Text(
                         text = when {
                             mysteryEnabled -> "ON • Pieces vanish after 1s (+25% Coins)"
@@ -926,7 +998,8 @@ private fun MysteryModeToggleCard(
 @Composable
 private fun SabotageDraftChipBar(
     selectedSabotages: List<SabotageType>,
-    onToggleSabotage: (SabotageType) -> Unit
+    onToggleSabotage: (SabotageType) -> Unit,
+    onShowSabotageInfo: (SabotageType) -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -976,25 +1049,42 @@ private fun SabotageDraftChipBar(
                             color = if (isSelected) accent else SubtleBorder
                         )
                     ) {
-                        Column(
-                            modifier = Modifier.padding(vertical = 6.dp, horizontal = 3.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Icon(
-                                imageVector = sabotageIcon(sab),
-                                contentDescription = sab.displayName,
-                                tint = if (isSelected) accent else TextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = sab.shortLabel,
-                                color = if (isSelected) TextPrimary else TextSecondary,
-                                fontSize = 9.sp,
-                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp, horizontal = 3.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = sabotageIcon(sab),
+                                    contentDescription = sab.displayName,
+                                    tint = if (isSelected) accent else TextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = sab.shortLabel,
+                                    color = if (isSelected) TextPrimary else TextSecondary,
+                                    fontSize = 9.sp,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(1.dp)
+                            ) {
+                                InfoIconButton(
+                                    contentDescription = "${sab.displayName} Info",
+                                    tint = if (isSelected) accent else TextSecondary,
+                                    iconSize = 11.dp,
+                                    touchSize = 16.dp,
+                                    onClick = { onShowSabotageInfo(sab) }
+                                )
+                            }
                         }
                     }
                 }

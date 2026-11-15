@@ -102,6 +102,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.multitetris.audio.HapticHelper
 import com.multitetris.economy.MatchRewardBreakdown
 import com.multitetris.economy.MatchRewardCalculator
 import com.multitetris.game.ActiveSabotageState
@@ -142,6 +143,7 @@ fun GameScreen(
     matchReward: MatchRewardBreakdown? = null,
     isNewCoopRecord: Boolean = false,
     isMuted: Boolean = false,
+    vibrationEnabled: Boolean = true,
     onToggleMute: () -> Unit = {},
     onSwitchFocus: () -> Unit,
     onSelectFocusPlayer: (Int) -> Unit,
@@ -153,6 +155,19 @@ fun GameScreen(
 ) {
     val playerCount = gameState.config.playerCount
     val context = LocalContext.current
+    var lastHapticClearEventId by remember { mutableStateOf(gameState.lineClearEventId) }
+    LaunchedEffect(gameState.lineClearEventId, vibrationEnabled) {
+        if (gameState.lineClearEventId > lastHapticClearEventId) {
+            lastHapticClearEventId = gameState.lineClearEventId
+            HapticHelper.vibrateLineClear(
+                context = context,
+                linesCleared = gameState.lastClearedRowIndices.size.coerceAtLeast(1),
+                vibrationEnabled = vibrationEnabled
+            )
+        } else if (gameState.lineClearEventId == 0L) {
+            lastHapticClearEventId = 0L
+        }
+    }
     DisposableEffect(playerCount) {
         val activity = context.findActivity()
         if (playerCount >= 3) {
@@ -248,6 +263,7 @@ fun GameScreen(
             isFlippedDebuff = isFlippedDebuff,
             isJammedDebuff = isJammedDebuff,
             isMuted = isMuted,
+            vibrationEnabled = vibrationEnabled,
             onToggleMute = onToggleMute,
             onSwitchFocus = onSwitchFocus,
             onSelectPlayerCard = handlePlayerCardClick,
@@ -372,6 +388,7 @@ fun GameScreen(
                 isFrozen = isFrozenDebuff,
                 isFlipped = isFlippedDebuff,
                 isDropJammed = isJammedDebuff,
+                vibrationEnabled = vibrationEnabled,
                 onAction = onAction
             )
         }
@@ -396,6 +413,7 @@ private fun LandscapeGameLayout(
     isFlippedDebuff: Boolean,
     isJammedDebuff: Boolean,
     isMuted: Boolean,
+    vibrationEnabled: Boolean,
     onToggleMute: () -> Unit,
     onSwitchFocus: () -> Unit,
     onSelectPlayerCard: (Int) -> Unit,
@@ -660,7 +678,7 @@ private fun LandscapeGameLayout(
                     enabled = controlsEnabled && !isJammedDebuff,
                     isFrozen = isFrozenDebuff,
                     onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (vibrationEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onAction(PlayerAction.HARD_DROP)
                     }
                 )
@@ -685,7 +703,7 @@ private fun LandscapeGameLayout(
                         enabled = controlsEnabled,
                         isFrozen = isFrozenDebuff,
                         onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            if (vibrationEnabled) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onAction(PlayerAction.ROTATE_CW)
                         }
                     )
@@ -1780,6 +1798,7 @@ private fun TouchControlsDeck(
     isFrozen: Boolean = false,
     isFlipped: Boolean = false,
     isDropJammed: Boolean = false,
+    vibrationEnabled: Boolean = true,
     onAction: (PlayerAction) -> Unit
 ) {
     val haptics = LocalHapticFeedback.current
@@ -1825,7 +1844,7 @@ private fun TouchControlsDeck(
             enabled = enabled,
             isFrozen = isFrozen,
             onClick = {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                if (vibrationEnabled) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onAction(PlayerAction.ROTATE_CW)
             }
         )
@@ -1838,7 +1857,7 @@ private fun TouchControlsDeck(
             enabled = enabled && !isDropJammed,
             isFrozen = isFrozen,
             onClick = {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                if (vibrationEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onAction(PlayerAction.HARD_DROP)
             }
         )

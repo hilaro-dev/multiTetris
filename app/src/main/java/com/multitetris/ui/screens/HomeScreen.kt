@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Button
@@ -87,7 +88,15 @@ fun HomeScreen(
     socialState: SocialUiState,
     economyState: EconomyUiState,
     careerStats: CareerStatsSnapshot = CareerStatsSnapshot(),
+    isDarkMode: Boolean = true,
+    soundEnabled: Boolean = true,
+    musicEnabled: Boolean = true,
+    vibrationEnabled: Boolean = true,
     onSelectMode: (GameMode) -> Unit,
+    onSetDarkMode: (Boolean) -> Unit = {},
+    onSetSoundEnabled: (Boolean) -> Unit = {},
+    onSetMusicEnabled: (Boolean) -> Unit = {},
+    onSetVibrationEnabled: (Boolean) -> Unit = {},
     onOpenShop: () -> Unit,
     onClaimMission: (String) -> Unit,
     onRefreshMissions: () -> Unit,
@@ -104,6 +113,8 @@ fun HomeScreen(
     var showFriendsSheet by remember { mutableStateOf(false) }
     var showMissionsSheet by remember { mutableStateOf(false) }
     var showStatsSheet by remember { mutableStateOf(false) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+    var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
 
     val onlineFriendsCount = socialState.friends.count { it.state != PresenceState.OFFLINE }
     val searchingFriendsCount = socialState.friends.count { it.state == PresenceState.SEARCHING }
@@ -116,7 +127,11 @@ fun HomeScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(ObsidianBg, Color(0xFF0C1324), ObsidianBg)
+                    colors = listOf(
+                        ObsidianBg,
+                        if (isDarkMode) Color(0xFF0C1324) else Color(0xFFE4ECF8),
+                        ObsidianBg
+                    )
                 )
             )
             .statusBarsPadding()
@@ -143,7 +158,8 @@ fun HomeScreen(
                     showMissionsSheet = true
                 },
                 onOpenStats = { showStatsSheet = true },
-                onOpenFriends = { showFriendsSheet = true }
+                onOpenFriends = { showFriendsSheet = true },
+                onOpenSettings = { showSettingsSheet = true }
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -167,7 +183,8 @@ fun HomeScreen(
 
             SegmentedModeToggle(
                 selectedMode = selectedMode,
-                onSelectMode = onSelectMode
+                onSelectMode = onSelectMode,
+                onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode) }
             )
 
             Spacer(modifier = Modifier.weight(1.1f))
@@ -394,6 +411,27 @@ fun HomeScreen(
             onDismiss = { showStatsSheet = false }
         )
     }
+
+    if (showSettingsSheet) {
+        SettingsSheet(
+            isDarkMode = isDarkMode,
+            soundEnabled = soundEnabled,
+            musicEnabled = musicEnabled,
+            vibrationEnabled = vibrationEnabled,
+            onSetDarkMode = onSetDarkMode,
+            onSetSoundEnabled = onSetSoundEnabled,
+            onSetMusicEnabled = onSetMusicEnabled,
+            onSetVibrationEnabled = onSetVibrationEnabled,
+            onDismiss = { showSettingsSheet = false }
+        )
+    }
+
+    activeTooltip?.let { tooltip ->
+        InfoTooltipDialog(
+            info = tooltip,
+            onDismiss = { activeTooltip = null }
+        )
+    }
 }
 
 @Composable
@@ -408,7 +446,8 @@ private fun HomeTopBar(
     onOpenShop: () -> Unit,
     onOpenMissions: () -> Unit,
     onOpenStats: () -> Unit,
-    onOpenFriends: () -> Unit
+    onOpenFriends: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -460,7 +499,7 @@ private fun HomeTopBar(
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             // Clickable Coin Balance Badge
             Surface(
@@ -520,6 +559,16 @@ private fun HomeTopBar(
                 badgeCount = friendsBadgeCount,
                 onClick = onOpenFriends
             )
+
+            // Settings Icon Button
+            TopIconBadgeButton(
+                icon = Icons.Rounded.Settings,
+                contentDescription = "Settings",
+                tint = TextPrimary,
+                showDot = false,
+                badgeCount = 0,
+                onClick = onOpenSettings
+            )
         }
     }
 }
@@ -536,7 +585,7 @@ private fun TopIconBadgeButton(
     Box {
         Surface(
             modifier = Modifier
-                .size(38.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onClick),
             shape = CircleShape,
@@ -586,7 +635,8 @@ private fun TopIconBadgeButton(
 @Composable
 private fun SegmentedModeToggle(
     selectedMode: GameMode,
-    onSelectMode: (GameMode) -> Unit
+    onSelectMode: (GameMode) -> Unit,
+    onShowInfo: (GameMode) -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -606,7 +656,8 @@ private fun SegmentedModeToggle(
                 icon = Icons.Rounded.Groups,
                 selected = selectedMode == GameMode.CO_OP,
                 accent = CyberCyan,
-                onClick = { onSelectMode(GameMode.CO_OP) }
+                onClick = { onSelectMode(GameMode.CO_OP) },
+                onInfoClick = { onShowInfo(GameMode.CO_OP) }
             )
             SegmentedModeOption(
                 modifier = Modifier.weight(1f),
@@ -614,7 +665,8 @@ private fun SegmentedModeToggle(
                 icon = Icons.Rounded.Bolt,
                 selected = selectedMode == GameMode.VERSUS,
                 accent = NeonMagenta,
-                onClick = { onSelectMode(GameMode.VERSUS) }
+                onClick = { onSelectMode(GameMode.VERSUS) },
+                onInfoClick = { onShowInfo(GameMode.VERSUS) }
             )
         }
     }
@@ -627,7 +679,8 @@ private fun SegmentedModeOption(
     icon: ImageVector,
     selected: Boolean,
     accent: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onInfoClick: () -> Unit
 ) {
     Surface(
         modifier = modifier
@@ -638,7 +691,7 @@ private fun SegmentedModeOption(
         border = if (selected) BorderStroke(1.2.dp, accent) else null
     ) {
         Row(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 10.dp),
+            modifier = Modifier.padding(vertical = 12.dp, horizontal = 8.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -648,12 +701,20 @@ private fun SegmentedModeOption(
                 tint = if (selected) accent else TextSecondary,
                 modifier = Modifier.size(18.dp)
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = title,
                 color = if (selected) TextPrimary else TextSecondary,
                 fontSize = 14.sp,
                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            InfoIconButton(
+                contentDescription = "$title Info",
+                tint = if (selected) accent else TextSecondary,
+                iconSize = 14.dp,
+                touchSize = 20.dp,
+                onClick = onInfoClick
             )
         }
     }
