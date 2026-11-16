@@ -201,9 +201,10 @@ fun MultiTetrisApp(
                         gameViewModel.startLocalTestGame(playerCount, subMode)
                         navController.navigate(Routes.GAME)
                     },
-                    onStartSingleplayerBot = { mode, sabotageEnabled, mysteryEnabled, difficulty, sabotages ->
+                    onStartSingleplayerBot = { playWithBot, mode, sabotageEnabled, mysteryEnabled, difficulty, sabotages ->
                         gameViewModel.playMatchStartSound()
                         gameViewModel.startSingleplayerBotGame(
+                            playWithBot = playWithBot,
                             mode = mode,
                             sabotageEnabled = sabotageEnabled,
                             mysteryEnabled = mysteryEnabled,

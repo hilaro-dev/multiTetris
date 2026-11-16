@@ -117,12 +117,13 @@ fun HomeScreen(
     onCancelPlayTogetherSearch: () -> Unit,
     onStartLocalTest: (playerCount: Int, subMode: VersusSubMode) -> Unit = { _, _ -> },
     onStartSingleplayerBot: (
+        playWithBot: Boolean,
         mode: GameMode,
         sabotageEnabled: Boolean,
         mysteryEnabled: Boolean,
         botDifficulty: BotDifficulty,
         selectedSabotages: List<SabotageType>
-    ) -> Unit = { _, _, _, _, _ -> },
+    ) -> Unit = { _, _, _, _, _, _ -> },
     onAcceptRoomInvite: (RoomInvite) -> Unit = {},
     onDeclineRoomInvite: (RoomInvite) -> Unit = {}
 ) {

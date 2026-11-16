@@ -120,6 +120,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private var lastLobbyPlayerCount: Int = 0
 
     private data class BotMatchConfig(
+        val playWithBot: Boolean = true,
         val mode: GameMode,
         val sabotageEnabled: Boolean,
         val mysteryEnabled: Boolean,
@@ -564,21 +565,24 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startSingleplayerBotGame(
+        playWithBot: Boolean = true,
         mode: GameMode,
         sabotageEnabled: Boolean,
         mysteryEnabled: Boolean,
         botDifficulty: BotDifficulty,
         selectedSabotages: List<SabotageType>
     ) {
+        val effectiveMode = if (playWithBot) mode else GameMode.CO_OP
         val config = BotMatchConfig(
-            mode = mode,
+            playWithBot = playWithBot,
+            mode = effectiveMode,
             sabotageEnabled = sabotageEnabled,
             mysteryEnabled = mysteryEnabled,
             botDifficulty = botDifficulty,
             playerSabotages = selectedSabotages
         )
         lastBotMatchConfig = config
-        _selectedMode.value = mode
+        _selectedMode.value = effectiveMode
 
         webRtcSessionController.stop()
         connectedMatchId = null
@@ -586,8 +590,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         resetMatchTracking()
 
         val baseSkins = uiState.value.selectedSkins
+        val p1Skin = baseSkins[1] ?: GameState.defaultSkinForPlayer(1)
+        val humanName = uiState.value.socialState.userProfile.nickname.ifBlank { "You" }
+
+        if (!playWithBot) {
+            localSessionController.startSingleplayerSolo(
+                playerSkinId = p1Skin,
+                sabotageEnabled = sabotageEnabled,
+                mysteryEnabled = mysteryEnabled,
+                humanNickname = humanName
+            )
+            return
+        }
+
         val mergedSkins = mapOf(
-            1 to (baseSkins[1] ?: GameState.defaultSkinForPlayer(1)),
+            1 to p1Skin,
             2 to (baseSkins[2] ?: GameState.defaultSkinForPlayer(2))
         )
         val player1Sabotages = if (selectedSabotages.isNotEmpty()) {
@@ -596,10 +613,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             SabotageConfig.defaultLoadout
         }
         val botSabotages = SabotageType.entries.shuffled().take(SabotageConfig.MAX_DRAFT_SLOTS)
-        val humanName = uiState.value.socialState.userProfile.nickname.ifBlank { "You" }
 
         localSessionController.startSingleplayerVsBot(
-            mode = mode,
+            mode = effectiveMode,
             playerSkins = mergedSkins,
             sabotageEnabled = sabotageEnabled,
             equippedSabotages = mapOf(
@@ -619,6 +635,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             val botConfig = lastBotMatchConfig
             if (botConfig != null) {
                 startSingleplayerBotGame(
+                    playWithBot = botConfig.playWithBot,
                     mode = botConfig.mode,
                     sabotageEnabled = botConfig.sabotageEnabled,
                     mysteryEnabled = botConfig.mysteryEnabled,

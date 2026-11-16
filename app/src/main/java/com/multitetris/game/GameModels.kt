@@ -220,6 +220,11 @@ data class BoardConfig(
         }
 
         private fun buildSpawnZones(width: Int, playerCount: Int): List<SpawnZone> {
+            if (playerCount == 1 && width == 10) {
+                return listOf(
+                    SpawnZone(playerId = 1, spawnX = 3, spawnY = 0, columnRange = 0..9)
+                )
+            }
             if (playerCount == 2 && width == 10) {
                 val cols = getSpawnColumns(playerCount, width)
                 return listOf(

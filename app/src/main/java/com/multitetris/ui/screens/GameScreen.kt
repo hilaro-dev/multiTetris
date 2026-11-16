@@ -2455,73 +2455,75 @@ private fun GameOverOverlay(
             }
         }
 
-        // Structured Round Leaderboard Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = ElevatedCard),
-            border = BorderStroke(1.dp, SubtleBorder)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+        if (gameState.config.playerCount > 1) {
+            // Structured Round Leaderboard Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = ElevatedCard),
+                border = BorderStroke(1.dp, SubtleBorder)
             ) {
-                Text(
-                    text = LocalStrings.current.roundLeaderboardTitle,
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.9.sp
-                )
-
-                rankedIds.forEachIndexed { index, pid ->
-                    val endpoint = networkState.players.firstOrNull { it.playerId == pid }
-                    val isDisconnected = (endpoint?.isDisconnected == true) || gameState.isPlayerDisconnected(pid)
-                    val displayName = endpoint?.displayName?.takeIf { it.isNotBlank() } ?: "Player $pid"
-                    val skinId = gameState.playerSkins[pid] ?: GameState.defaultSkinForPlayer(pid)
-                    val score = gameState.playerScores[pid] ?: 0
-                    val lines = gameState.playerLines[pid] ?: 0
-                    val team = gameState.playerTeams[pid] ?: TeamColor.NONE
-                    val explicitPlacement = gameState.placementFor(pid)
-                    val displayRank = when {
-                        isDisconnected -> 0
-                        gameState.mode == GameMode.CO_OP -> index + 1
-                        explicitPlacement > 0 -> explicitPlacement
-                        pid == winnerId -> 1
-                        else -> index + 1
-                    }
-                    val coinsEarned = if (pid == localPlayerId && matchReward != null) {
-                        matchReward.totalCoins
-                    } else {
-                        MatchRewardCalculator.calculate(
-                            gameState = gameState,
-                            localPlayerId = pid,
-                            isLocalTest = isLocalTest,
-                            matchDurationMillis = if (matchEligibleForCoins) 15_000L else 0L
-                        ).totalCoins
-                    }
-
-                    RoundLeaderboardRow(
-                        playerId = pid,
-                        rank = displayRank,
-                        isCrown = !isDisconnected && (
-                            (gameState.mode == GameMode.VERSUS && (
-                                (isTeamsMode && winTeam != null && team == winTeam) ||
-                                    (!isTeamsMode && displayRank == 1)
-                                )) ||
-                                (gameState.mode == GameMode.CO_OP && index == 0)
-                            ),
-                        skinId = skinId,
-                        nickname = displayName,
-                        teamColor = if (isTeamsMode) team else TeamColor.NONE,
-                        score = score,
-                        linesCleared = lines,
-                        coinsEarned = if (gameState.mode == GameMode.VERSUS) coinsEarned else null,
-                        isLocalPlayer = pid == localPlayerId,
-                        isDisconnected = isDisconnected
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = LocalStrings.current.roundLeaderboardTitle,
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.9.sp
                     )
+
+                    rankedIds.forEachIndexed { index, pid ->
+                        val endpoint = networkState.players.firstOrNull { it.playerId == pid }
+                        val isDisconnected = (endpoint?.isDisconnected == true) || gameState.isPlayerDisconnected(pid)
+                        val displayName = endpoint?.displayName?.takeIf { it.isNotBlank() } ?: "Player $pid"
+                        val skinId = gameState.playerSkins[pid] ?: GameState.defaultSkinForPlayer(pid)
+                        val score = gameState.playerScores[pid] ?: 0
+                        val lines = gameState.playerLines[pid] ?: 0
+                        val team = gameState.playerTeams[pid] ?: TeamColor.NONE
+                        val explicitPlacement = gameState.placementFor(pid)
+                        val displayRank = when {
+                            isDisconnected -> 0
+                            gameState.mode == GameMode.CO_OP -> index + 1
+                            explicitPlacement > 0 -> explicitPlacement
+                            pid == winnerId -> 1
+                            else -> index + 1
+                        }
+                        val coinsEarned = if (pid == localPlayerId && matchReward != null) {
+                            matchReward.totalCoins
+                        } else {
+                            MatchRewardCalculator.calculate(
+                                gameState = gameState,
+                                localPlayerId = pid,
+                                isLocalTest = isLocalTest,
+                                matchDurationMillis = if (matchEligibleForCoins) 15_000L else 0L
+                            ).totalCoins
+                        }
+
+                        RoundLeaderboardRow(
+                            playerId = pid,
+                            rank = displayRank,
+                            isCrown = !isDisconnected && (
+                                (gameState.mode == GameMode.VERSUS && (
+                                    (isTeamsMode && winTeam != null && team == winTeam) ||
+                                        (!isTeamsMode && displayRank == 1)
+                                    )) ||
+                                    (gameState.mode == GameMode.CO_OP && index == 0)
+                                ),
+                            skinId = skinId,
+                            nickname = displayName,
+                            teamColor = if (isTeamsMode) team else TeamColor.NONE,
+                            score = score,
+                            linesCleared = lines,
+                            coinsEarned = if (gameState.mode == GameMode.VERSUS) coinsEarned else null,
+                            isLocalPlayer = pid == localPlayerId,
+                            isDisconnected = isDisconnected
+                        )
+                    }
                 }
             }
         }

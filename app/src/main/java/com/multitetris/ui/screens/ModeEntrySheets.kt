@@ -76,6 +76,7 @@ import com.multitetris.ui.theme.TextSecondary
 fun SingleplayerSetupSheet(
     initialMode: GameMode,
     onStartMatch: (
+        playWithBot: Boolean,
         mode: GameMode,
         sabotageEnabled: Boolean,
         mysteryEnabled: Boolean,
@@ -86,6 +87,7 @@ fun SingleplayerSetupSheet(
 ) {
     val strings = LocalStrings.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var playWithBot by remember { mutableStateOf(false) }
     var selectedMode by remember { mutableStateOf(initialMode) }
     var sabotageEnabled by remember { mutableStateOf(false) }
     var mysteryEnabled by remember { mutableStateOf(false) }
@@ -93,7 +95,8 @@ fun SingleplayerSetupSheet(
     var selectedSabotages by remember { mutableStateOf(SabotageConfig.defaultLoadout) }
     var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
 
-    val modeAccent = if (selectedMode == GameMode.VERSUS) NeonMagenta else CyberCyan
+    val effectiveMode = if (playWithBot) selectedMode else GameMode.CO_OP
+    val modeAccent = if (effectiveMode == GameMode.VERSUS) NeonMagenta else CyberCyan
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -140,66 +143,108 @@ fun SingleplayerSetupSheet(
                 }
             }
 
-            // Mode Toggle (Co-op vs Versus)
-            SegmentedModeToggle(
-                selectedMode = selectedMode,
-                onSelectMode = { selectedMode = it },
-                onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode, strings) }
-            )
-            Text(
-                text = if (selectedMode == GameMode.CO_OP) strings.botCoopHint else strings.botVersusHint,
-                color = TextSecondary,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(horizontal = 4.dp)
+            // Play with Bot Toggle (Classic Solo vs. Bot)
+            SetupModifierSwitchRow(
+                icon = Icons.Rounded.SmartToy,
+                title = strings.playWithBotTitle,
+                subtitle = strings.playWithBotSubtitle,
+                accent = CyberCyan,
+                checked = playWithBot,
+                onCheckedChange = { playWithBot = it },
+                onShowInfo = null
             )
 
-            // Bot Difficulty Selector
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = strings.botDifficultyTitle,
-                    color = CyberCyan,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
-                Row(
+            AnimatedVisibility(visible = !playWithBot) {
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = CyberCyan.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.35f))
                 ) {
-                    val difficulties = listOf(
-                        BotDifficulty.EASY to strings.botDifficultyEasy,
-                        BotDifficulty.NORMAL to strings.botDifficultyNormal,
-                        BotDifficulty.HARD to strings.botDifficultyHard
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = strings.classicSoloBadge.uppercase(),
+                            color = CyberCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.8.sp
+                        )
+                        Text(
+                            text = strings.classicSoloHint,
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Mode Toggle & Bot Difficulty (only when Play with Bot is ON)
+            AnimatedVisibility(visible = playWithBot) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SegmentedModeToggle(
+                        selectedMode = selectedMode,
+                        onSelectMode = { selectedMode = it },
+                        onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode, strings) }
                     )
-                    difficulties.forEach { (diff, label) ->
-                        val selected = botDifficulty == diff
-                        val accent = when (diff) {
-                            BotDifficulty.EASY -> Color(0xFF2FE066)
-                            BotDifficulty.NORMAL -> CyberCyan
-                            BotDifficulty.HARD -> NeonMagenta
-                        }
-                        Surface(
-                            onClick = { botDifficulty = diff },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (selected) accent.copy(alpha = 0.18f) else ElevatedCard,
-                            border = BorderStroke(
-                                width = if (selected) 1.5.dp else 1.dp,
-                                color = if (selected) accent else SubtleBorder
-                            )
+                    Text(
+                        text = if (selectedMode == GameMode.CO_OP) strings.botCoopHint else strings.botVersusHint,
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+
+                    // Bot Difficulty Selector
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = strings.botDifficultyTitle,
+                            color = CyberCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.sp
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    color = if (selected) accent else TextSecondary,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium
-                                )
+                            val difficulties = listOf(
+                                BotDifficulty.EASY to strings.botDifficultyEasy,
+                                BotDifficulty.NORMAL to strings.botDifficultyNormal,
+                                BotDifficulty.HARD to strings.botDifficultyHard
+                            )
+                            difficulties.forEach { (diff, label) ->
+                                val selected = botDifficulty == diff
+                                val accent = when (diff) {
+                                    BotDifficulty.EASY -> Color(0xFF2FE066)
+                                    BotDifficulty.NORMAL -> CyberCyan
+                                    BotDifficulty.HARD -> NeonMagenta
+                                }
+                                Surface(
+                                    onClick = { botDifficulty = diff },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (selected) accent.copy(alpha = 0.18f) else ElevatedCard,
+                                    border = BorderStroke(
+                                        width = if (selected) 1.5.dp else 1.dp,
+                                        color = if (selected) accent else SubtleBorder
+                                    )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (selected) accent else TextSecondary,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -210,7 +255,7 @@ fun SingleplayerSetupSheet(
             SetupModifierSwitchRow(
                 icon = Icons.Rounded.Bolt,
                 title = strings.sabotageModeTitle,
-                subtitle = strings.sabotageModeSubtitle,
+                subtitle = if (!playWithBot) strings.survivalGlitchSubtitle else strings.sabotageModeSubtitle,
                 accent = ElectricGold,
                 checked = sabotageEnabled,
                 onCheckedChange = { sabotageEnabled = it },
@@ -229,7 +274,7 @@ fun SingleplayerSetupSheet(
             )
 
             // Versus Sabotage Loadout Picker
-            AnimatedVisibility(visible = sabotageEnabled && selectedMode == GameMode.VERSUS) {
+            AnimatedVisibility(visible = playWithBot && sabotageEnabled && selectedMode == GameMode.VERSUS) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -328,7 +373,8 @@ fun SingleplayerSetupSheet(
                 onClick = {
                     onDismiss()
                     onStartMatch(
-                        selectedMode,
+                        playWithBot,
+                        effectiveMode,
                         sabotageEnabled,
                         mysteryEnabled,
                         botDifficulty,
@@ -341,7 +387,7 @@ fun SingleplayerSetupSheet(
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = modeAccent,
-                    contentColor = if (selectedMode == GameMode.VERSUS) Color.White else ObsidianBg
+                    contentColor = if (effectiveMode == GameMode.VERSUS) Color.White else ObsidianBg
                 )
             ) {
                 Icon(
@@ -566,7 +612,7 @@ private fun SetupModifierSwitchRow(
     accent: Color,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    onShowInfo: () -> Unit
+    onShowInfo: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -608,13 +654,15 @@ private fun SetupModifierSwitchRow(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
-                        InfoIconButton(
-                            contentDescription = LocalStrings.current.moreInfoAbout(title),
-                            tint = if (checked) accent else TextSecondary,
-                            iconSize = 14.dp,
-                            touchSize = 18.dp,
-                            onClick = onShowInfo
-                        )
+                        if (onShowInfo != null) {
+                            InfoIconButton(
+                                contentDescription = LocalStrings.current.moreInfoAbout(title),
+                                tint = if (checked) accent else TextSecondary,
+                                iconSize = 14.dp,
+                                touchSize = 18.dp,
+                                onClick = onShowInfo
+                            )
+                        }
                     }
                     Text(
                         text = subtitle,

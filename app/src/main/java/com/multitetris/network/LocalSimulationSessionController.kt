@@ -163,6 +163,56 @@ class LocalSimulationSessionController(
         startBotTicker(controller, botDifficulty)
     }
 
+    fun startSingleplayerSolo(
+        playerSkinId: String,
+        sabotageEnabled: Boolean,
+        mysteryEnabled: Boolean,
+        humanNickname: String
+    ) {
+        stop()
+        val config = BoardConfig.forPlayerCount(1)
+        val now = clockMillis()
+        val initialState = synchronized(engineLock) {
+            lastDropTimeMs.clear()
+            for (zone in config.spawnZones) {
+                lastDropTimeMs[zone.playerId] = now
+            }
+            engine.startNewGame(
+                mode = GameMode.CO_OP,
+                config = config,
+                playerSkins = mapOf(1 to playerSkinId),
+                currentTimeMillis = now,
+                versusSubMode = VersusSubMode.FREE_FOR_ALL,
+                playerTeams = emptyMap(),
+                sabotageEnabled = sabotageEnabled,
+                equippedSabotages = emptyMap(),
+                mysteryEnabled = mysteryEnabled
+            )
+        }
+
+        val playerEndpoints = listOf(
+            PlayerEndpointState(
+                playerId = 1,
+                displayName = humanNickname.ifBlank { "You" },
+                isLocalController = true,
+                latencyMs = 0
+            )
+        )
+
+        _sessionState.update {
+            NetworkSessionState(
+                sessionMode = SessionMode.LOCAL_SIMULATION,
+                status = ConnectionStatus.READY_LOCAL,
+                controlledPlayerId = 1,
+                players = playerEndpoints,
+                activeSabotagedPlayerIds = emptySet()
+            )
+        }
+        _gameState.value = initialState
+        botController = null
+        startGravityTicker()
+    }
+
     override fun dispatchAction(playerId: Int, action: PlayerAction) {
         val now = clockMillis()
         val updated = synchronized(engineLock) {
