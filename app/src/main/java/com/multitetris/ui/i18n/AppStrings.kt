@@ -46,6 +46,7 @@ data class AppStrings(
     val appSubtitle: String,
     val modeCoop: String,
     val modeVersus: String,
+    val modeSeparate: String,
     val createRoom: String,
     val skinShopButton: (Int, Int) -> String,
     val localTest2p: String,
@@ -73,6 +74,8 @@ data class AppStrings(
     val survivalGlitchSubtitle: String,
     val botCoopHint: String,
     val botVersusHint: String,
+    val botSeparateHint: String,
+    val eliminatedBadge: String,
     val activeRoomInvitesHeader: String,
     val openFriendsAndInvites: String,
 
@@ -115,6 +118,8 @@ data class AppStrings(
     val tooltipCoopDesc: String,
     val tooltipVersusTitle: String,
     val tooltipVersusDesc: String,
+    val tooltipSeparateTitle: String,
+    val tooltipSeparateDesc: String,
     val tooltipFfaTitle: String,
     val tooltipFfaDesc: String,
     val tooltipTeamsTitle: String,
@@ -248,6 +253,7 @@ data class AppStrings(
     fun gameModeLabel(mode: GameMode): String = when (mode) {
         GameMode.CO_OP -> modeCoop
         GameMode.VERSUS -> modeVersus
+        GameMode.SEPARATE -> modeSeparate
     }
 
     fun versusSubModeLabel(subMode: VersusSubMode): String = when (subMode) {
@@ -325,6 +331,7 @@ val EnStrings = AppStrings(
     appSubtitle = "CO-OP & VERSUS ARCADE",
     modeCoop = "CO-OP",
     modeVersus = "VERSUS",
+    modeSeparate = "SEPARATE",
     createRoom = "CREATE ROOM",
     skinShopButton = { unlocked, total -> "SKIN SHOP ($unlocked/$total)" },
     localTest2p = "LOCAL TEST (2P)",
@@ -351,6 +358,8 @@ val EnStrings = AppStrings(
     survivalGlitchSubtitle = "Random System Glitches hit every ~22s",
     botCoopHint = "Team up with Bot on the shared board",
     botVersusHint = "1v1 battle against the Bot",
+    botSeparateHint = "Play on separate 10x20 boards — outlast the Bot",
+    eliminatedBadge = "ELIMINATED",
     activeRoomInvitesHeader = "ACTIVE ROOM INVITES",
     openFriendsAndInvites = "Friends & Add Friend",
 
@@ -388,7 +397,9 @@ val EnStrings = AppStrings(
     tooltipCoopTitle = "Co-op Mode",
     tooltipCoopDesc = "Team up with up to 4 players on one giant shared board! Work together to clear lines, build combos, and survive as long as possible.",
     tooltipVersusTitle = "Versus Mode",
-    tooltipVersusDesc = "Every player gets their own board. Clearing multiple lines sends garbage attacks to opponents—last player or team standing wins!",
+    tooltipVersusDesc = "Battle on the same shared board! Clear lines to outscore rivals—last player or team standing wins!",
+    tooltipSeparateTitle = "Separate Boards",
+    tooltipSeparateDesc = "Everyone plays on their own separate board! Watch rivals in the corner mini-boards and be the last player or team standing.",
     tooltipFfaTitle = "Free-For-All (FFA)",
     tooltipFfaDesc = "Every player for themselves! Garbage lines target opponents, and the last surviving player takes 1st place.",
     tooltipTeamsTitle = "2v2 / Teams Mode",
@@ -552,6 +563,7 @@ val TrStrings = AppStrings(
     appSubtitle = "İŞBİRLİĞİ & KARŞILIKLI ARCADE",
     modeCoop = "İŞBİRLİĞİ",
     modeVersus = "KARŞILIKLI",
+    modeSeparate = "AYRI TAHTALAR",
     createRoom = "ODA OLUŞTUR",
     skinShopButton = { unlocked, total -> "TEMA MAĞAZASI ($unlocked/$total)" },
     localTest2p = "YEREL TEST (2K)",
@@ -578,6 +590,8 @@ val TrStrings = AppStrings(
     survivalGlitchSubtitle = "Her ~22sn'de rastgele Sistem Hatası tetiklenir",
     botCoopHint = "Ortak tahtada Bot ile takım ol",
     botVersusHint = "Bota karşı 1v1 mücadele",
+    botSeparateHint = "Ayrı 10x20 tahtalarda oyna — Bottan daha uzun dayan",
+    eliminatedBadge = "ELENDİ",
     activeRoomInvitesHeader = "AKTİF ODA DAVETLERİ",
     openFriendsAndInvites = "Arkadaşlar & Arkadaş Ekle",
 
@@ -615,7 +629,9 @@ val TrStrings = AppStrings(
     tooltipCoopTitle = "İşbirliği Modu (Co-op)",
     tooltipCoopDesc = "4 oyuncuya kadar dev bir ortak tahtada takım olun! Satırları temizlemek, kombo yapmak ve olabildiğince uzun hayatta kalmak için birlikte çalışın.",
     tooltipVersusTitle = "Karşılıklı Mod (Versus)",
-    tooltipVersusDesc = "Herkesin kendi tahtası vardır. Çoklu satır temizlemek rakiplere çöp satır gönderir—ayakta kalan son oyuncu veya takım kazanır!",
+    tooltipVersusDesc = "Ortak tahtada mücadele! Satırları temizleyip rakipleri geç—ayakta kalan son oyuncu veya takım kazanır!",
+    tooltipSeparateTitle = "Ayrı Tahtalar Modu",
+    tooltipSeparateDesc = "Herkes kendi ayrı tahtasında oynar! Üst köşelerdeki mini tahtalardan rakipleri izle ve ayakta kalan son oyuncu veya takım ol.",
     tooltipFfaTitle = "Herkes Tek (FFA)",
     tooltipFfaDesc = "Herkes kendi başına! Çöp satırlar rakiplere gider, hayatta kalan son oyuncu 1. olur.",
     tooltipTeamsTitle = "2v2 / Takımlı Mod",

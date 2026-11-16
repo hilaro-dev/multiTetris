@@ -112,7 +112,11 @@ class LocalSimulationSessionController(
         humanNickname: String
     ) {
         stop()
-        val config = BoardConfig.forPlayerCount(2)
+        val config = if (mode == GameMode.SEPARATE) {
+            BoardConfig.forSeparateBoards(2)
+        } else {
+            BoardConfig.forPlayerCount(2)
+        }
         val now = clockMillis()
         val initialState = synchronized(engineLock) {
             lastDropTimeMs.clear()
@@ -291,16 +295,18 @@ class LocalSimulationSessionController(
                 val snapshot = synchronized(engineLock) { engine.state }
                 if (snapshot.isPaused || snapshot.isGameOver) continue
 
-                controller.maybeSelectSabotage(snapshot, now)?.let { (targetId, sab) ->
-                    val updated = synchronized(engineLock) {
-                        engine.useSabotage(
-                            attackerPlayerId = 2,
-                            targetPlayerId = targetId,
-                            sabotageType = sab,
-                            attackerLabel = "Bot"
-                        )
+                if (snapshot.sabotageEnabled && snapshot.mode != GameMode.CO_OP) {
+                    controller.maybeSelectSabotage(snapshot, now)?.let { (targetId, sab) ->
+                        val updated = synchronized(engineLock) {
+                            engine.useSabotage(
+                                attackerPlayerId = 2,
+                                targetPlayerId = targetId,
+                                sabotageType = sab,
+                                attackerLabel = "Bot"
+                            )
+                        }
+                        publishState(updated, now)
                     }
-                    publishState(updated, now)
                 }
 
                 val latestSnapshot = synchronized(engineLock) { engine.state }

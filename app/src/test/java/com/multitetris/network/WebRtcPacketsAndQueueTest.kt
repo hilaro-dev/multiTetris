@@ -142,6 +142,7 @@ class WebRtcPacketsAndQueueTest {
             level = 1,
             playerScores = mapOf(1 to 500, 2 to 300),
             playerLines = mapOf(1 to 3, 2 to 1),
+            sabotageEnabled = true,
             sabotageBurstUntilMillis = mapOf(2 to now + 500L)
         )
 

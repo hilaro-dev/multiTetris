@@ -238,6 +238,7 @@ fun MultiTetrisApp(
                         socialState = uiState.socialState,
                         connectedPeerUids = uiState.connectedPeerUids,
                         onInviteFriend = gameViewModel::inviteFriendToRoom,
+                        onSetRoomMode = gameViewModel::setRoomMode,
                         onSetVersusSubMode = gameViewModel::setRoomVersusSubMode,
                         onSetSabotageEnabled = gameViewModel::setRoomSabotageEnabled,
                         onSetMysteryEnabled = gameViewModel::setRoomMysteryEnabled,

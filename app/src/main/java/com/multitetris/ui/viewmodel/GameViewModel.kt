@@ -249,7 +249,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (game.lineClearEventId > lastPlayedClearEventId) {
                     lastPlayedClearEventId = game.lineClearEventId
-                    soundEngine.playLineClear(game.lastClearedRowIndices.size.coerceAtLeast(1))
+                    val localId = if (_isMultiplayerSession.value) {
+                        webRtcSessionController.sessionState.value.controlledPlayerId
+                    } else {
+                        localSessionController.sessionState.value.controlledPlayerId
+                    }
+                    val isLocalClear = game.mode != GameMode.SEPARATE ||
+                        game.lineClearPlayerId == null ||
+                        game.lineClearPlayerId == localId
+                    if (isLocalClear) {
+                        soundEngine.playLineClear(game.lastClearedRowIndices.size.coerceAtLeast(1))
+                    }
                 } else if (game.lineClearEventId == 0L) {
                     lastPlayedClearEventId = 0L
                 }
@@ -312,7 +322,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         if (breakdown.totalCoins > 0) {
                             economyRepository.addCoins(breakdown.totalCoins)
                         }
-                        val didWin = if (game.mode == GameMode.VERSUS) {
+                        val didWin = if (game.mode != GameMode.CO_OP) {
                             if (game.versusSubMode == VersusSubMode.TEAMS_2V2) {
                                 game.winningTeam != null && game.playerTeams[localPlayerId] == game.winningTeam
                             } else {
@@ -607,21 +617,26 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             1 to p1Skin,
             2 to (baseSkins[2] ?: GameState.defaultSkinForPlayer(2))
         )
-        val player1Sabotages = if (selectedSabotages.isNotEmpty()) {
-            selectedSabotages.take(SabotageConfig.MAX_DRAFT_SLOTS)
+        val equippedMap = if (sabotageEnabled && effectiveMode != GameMode.CO_OP) {
+            val player1Sabotages = if (selectedSabotages.isNotEmpty()) {
+                selectedSabotages.take(SabotageConfig.MAX_DRAFT_SLOTS)
+            } else {
+                SabotageConfig.defaultLoadout
+            }
+            val botSabotages = SabotageType.entries.shuffled().take(SabotageConfig.MAX_DRAFT_SLOTS)
+            mapOf(
+                1 to player1Sabotages,
+                2 to botSabotages
+            )
         } else {
-            SabotageConfig.defaultLoadout
+            emptyMap()
         }
-        val botSabotages = SabotageType.entries.shuffled().take(SabotageConfig.MAX_DRAFT_SLOTS)
 
         localSessionController.startSingleplayerVsBot(
             mode = effectiveMode,
             playerSkins = mergedSkins,
             sabotageEnabled = sabotageEnabled,
-            equippedSabotages = mapOf(
-                1 to player1Sabotages,
-                2 to botSabotages
-            ),
+            equippedSabotages = equippedMap,
             mysteryEnabled = mysteryEnabled,
             botDifficulty = botDifficulty,
             humanNickname = humanName
@@ -820,6 +835,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createRoom() {
         socialManager.createRoom(_selectedMode.value)
+    }
+
+    fun setRoomMode(mode: GameMode) {
+        _selectedMode.value = mode
+        socialManager.setRoomMode(mode)
     }
 
     fun setRoomVersusSubMode(subMode: VersusSubMode) {

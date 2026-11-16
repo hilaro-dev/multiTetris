@@ -43,7 +43,7 @@ object MatchRewardCalculator {
             )
         }
 
-        return if (gameState.mode == GameMode.VERSUS) {
+        return if (gameState.mode != GameMode.CO_OP) {
             val (rawPlacement, placementLabel) = when (gameState.versusSubMode) {
                 VersusSubMode.TEAMS_2V2 -> {
                     val myTeam = gameState.playerTeams[localPlayerId] ?: TeamColor.NONE

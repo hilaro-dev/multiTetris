@@ -87,6 +87,7 @@ data class MatchStatRecord(
         fun defaultModeKey(mode: GameMode, versusSubMode: VersusSubMode): String = when (mode) {
             GameMode.CO_OP -> "CO_OP"
             GameMode.VERSUS -> if (versusSubMode == VersusSubMode.TEAMS_2V2) "VERSUS_TEAMS" else "VERSUS_FFA"
+            GameMode.SEPARATE -> if (versusSubMode == VersusSubMode.TEAMS_2V2) "SEPARATE_TEAMS" else "SEPARATE_FFA"
         }
     }
 }
@@ -113,8 +114,8 @@ object StatsReducer {
         val modeLinesDelta = if (record.mode == GameMode.CO_OP) record.sharedLines else localLines
         updatedModeStats[record.modeKey] = existingMode.copy(
             totalMatches = existingMode.totalMatches + 1,
-            wins = existingMode.wins + if (record.mode == GameMode.VERSUS && record.didLocalPlayerWin) 1 else 0,
-            losses = existingMode.losses + if (record.mode == GameMode.VERSUS && !record.didLocalPlayerWin) 1 else 0,
+            wins = existingMode.wins + if (record.mode != GameMode.CO_OP && record.didLocalPlayerWin) 1 else 0,
+            losses = existingMode.losses + if (record.mode != GameMode.CO_OP && !record.didLocalPlayerWin) 1 else 0,
             totalLinesCleared = existingMode.totalLinesCleared + localLines,
             bestScore = maxOf(existingMode.bestScore, matchScoreForBest),
             bestLines = maxOf(existingMode.bestLines, modeLinesDelta)
@@ -162,8 +163,8 @@ object StatsReducer {
 
         val updated = current.copy(
             totalMatches = current.totalMatches + 1,
-            versusWins = current.versusWins + if (record.mode == GameMode.VERSUS && record.didLocalPlayerWin) 1 else 0,
-            versusLosses = current.versusLosses + if (record.mode == GameMode.VERSUS && !record.didLocalPlayerWin) 1 else 0,
+            versusWins = current.versusWins + if (record.mode != GameMode.CO_OP && record.didLocalPlayerWin) 1 else 0,
+            versusLosses = current.versusLosses + if (record.mode != GameMode.CO_OP && !record.didLocalPlayerWin) 1 else 0,
             totalLinesCleared = current.totalLinesCleared + localLines,
             highestSoloOrMatchScore = maxOf(current.highestSoloOrMatchScore, matchScoreForBest),
             bestCoopLines = if (record.mode == GameMode.CO_OP) maxOf(current.bestCoopLines, record.sharedLines) else current.bestCoopLines,

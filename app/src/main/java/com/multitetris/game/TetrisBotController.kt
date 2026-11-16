@@ -44,6 +44,7 @@ class TetrisBotController(
     private var lastPieceRot: Int = -1
     private var lastEmittedSteeringAction: PlayerAction? = null
     private var consecutiveStalls: Int = 0
+    private val usedSabotagesLocal = mutableSetOf<SabotageType>()
 
     fun reset() {
         currentPlan = null
@@ -55,6 +56,7 @@ class TetrisBotController(
         lastPieceRot = -1
         lastEmittedSteeringAction = null
         consecutiveStalls = 0
+        usedSabotagesLocal.clear()
     }
 
     fun nextAction(state: GameState): PlayerAction? {
@@ -155,34 +157,55 @@ class TetrisBotController(
      */
     fun maybeSelectSabotage(state: GameState, nowMs: Long): Pair<Int, SabotageType>? {
         if (state.isPaused || state.isGameOver) return null
-        if (!state.sabotageEnabled || state.mode != GameMode.VERSUS) return null
-        if (state.isPlayerEliminated(botPlayerId)) return null
-        if (nowMs - lastSabotageTriggerMs < 8_000L) return null
+        if (!state.sabotageEnabled || state.mode == GameMode.CO_OP) return null
+        if (state.isPlayerEliminated(botPlayerId) ||
+            state.isPlayerDisconnected(botPlayerId) ||
+            state.isPlayerBlocked(botPlayerId)
+        ) {
+            return null
+        }
+        if (lastSabotageTriggerMs > 0L && nowMs - lastSabotageTriggerMs < SABOTAGE_COOLDOWN_MS) {
+            return null
+        }
+
+        val alreadyUsed = state.usedSabotagesFor(botPlayerId) + usedSabotagesLocal
+        if (alreadyUsed.size >= SabotageConfig.MAX_DRAFT_SLOTS) return null
 
         val targetPlayerId = state.validSabotageTargetsFor(botPlayerId)
             .firstOrNull { targetId ->
-                !state.isPlayerEliminated(targetId) && state.activeSabotageFor(targetId) == null
+                !state.isPlayerEliminated(targetId) &&
+                    !state.isPlayerDisconnected(targetId) &&
+                    state.activeSabotageFor(targetId) == null
             } ?: return null
 
         val unused = state.equippedSabotagesFor(botPlayerId)
-            .filterNot { it in state.usedSabotagesFor(botPlayerId) }
+            .take(SabotageConfig.MAX_DRAFT_SLOTS)
+            .filterNot { it in alreadyUsed }
         if (unused.isEmpty()) return null
 
-        // Check if any locked block is above row 10 (row index < 10, where 0 is top)
+        // Check if any locked block on the target's board is above row 10 (row index < 10, where 0 is top)
+        val targetGrid = state.boardGridFor(targetPlayerId)
         val stackAboveRow10 = (0 until 10.coerceAtMost(state.config.height)).any { r ->
-            state.grid[r].any { it != null }
+            targetGrid[r].any { it != null }
         }
         if (!stackAboveRow10) return null
 
+        val chosen = unused.first()
+        usedSabotagesLocal.add(chosen)
         lastSabotageTriggerMs = nowMs
-        return targetPlayerId to unused.first()
+        return targetPlayerId to chosen
+    }
+
+    companion object {
+        private const val SABOTAGE_COOLDOWN_MS = 13_000L
     }
 
     private fun computeBestPlan(state: GameState, piece: ActivePiece): PlannedMove? {
         val rows = state.config.height
         val cols = state.config.width
+        val botGrid = state.boardGridFor(botPlayerId)
         val staticGrid = Array(rows) { r ->
-            BooleanArray(cols) { c -> state.grid[r][c] != null }
+            BooleanArray(cols) { c -> botGrid[r][c] != null }
         }
         val simGrid = buildSimulationGrid(state, staticGrid, rows, cols)
 

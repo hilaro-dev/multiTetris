@@ -110,9 +110,11 @@ import androidx.compose.ui.unit.sp
 import com.multitetris.audio.HapticHelper
 import com.multitetris.economy.MatchRewardBreakdown
 import com.multitetris.economy.MatchRewardCalculator
+import com.multitetris.game.ActivePiece
 import com.multitetris.game.ActiveSabotageState
 import com.multitetris.game.GameMode
 import com.multitetris.game.GameState
+import com.multitetris.game.LockedCell
 import com.multitetris.game.PlayerAction
 import com.multitetris.game.SabotageType
 import com.multitetris.game.TeamColor
@@ -165,18 +167,23 @@ fun GameScreen(
     LaunchedEffect(gameState.lineClearEventId, vibrationEnabled) {
         if (gameState.lineClearEventId > lastHapticClearEventId) {
             lastHapticClearEventId = gameState.lineClearEventId
-            HapticHelper.vibrateLineClear(
-                context = context,
-                linesCleared = gameState.lastClearedRowIndices.size.coerceAtLeast(1),
-                vibrationEnabled = vibrationEnabled
-            )
+            val isLocalClear = gameState.mode != GameMode.SEPARATE ||
+                gameState.lineClearPlayerId == null ||
+                gameState.lineClearPlayerId == networkState.controlledPlayerId
+            if (isLocalClear) {
+                HapticHelper.vibrateLineClear(
+                    context = context,
+                    linesCleared = gameState.lastClearedRowIndices.size.coerceAtLeast(1),
+                    vibrationEnabled = vibrationEnabled
+                )
+            }
         } else if (gameState.lineClearEventId == 0L) {
             lastHapticClearEventId = 0L
         }
     }
-    DisposableEffect(playerCount) {
+    DisposableEffect(playerCount, gameState.mode) {
         val activity = context.findActivity()
-        if (playerCount >= 3) {
+        if (playerCount >= 3 && gameState.mode != GameMode.SEPARATE) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -272,7 +279,7 @@ fun GameScreen(
     val usedSabotages = gameState.usedSabotagesFor(controlledPlayerId)
     val validSabotageTargets = gameState.validSabotageTargetsFor(controlledPlayerId)
     val showVersusSabotageDeck = gameState.sabotageEnabled &&
-        gameState.mode == GameMode.VERSUS &&
+        gameState.mode != GameMode.CO_OP &&
         equippedSabotages.isNotEmpty() &&
         !gameState.isPlayerEliminated(controlledPlayerId) &&
         !gameState.isPlayerDisconnected(controlledPlayerId)
@@ -321,7 +328,7 @@ fun GameScreen(
         }
     }
 
-    if (playerCount >= 3) {
+    if (playerCount >= 3 && gameState.mode != GameMode.SEPARATE) {
         LandscapeGameLayout(
             gameState = gameState,
             networkState = networkState,
@@ -376,16 +383,27 @@ fun GameScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            DualPlayerHud(
-                gameState = gameState,
-                networkState = networkState,
-                controlledPlayerId = controlledPlayerId,
-                pendingSabotage = pendingSabotage,
-                validSabotageTargets = validSabotageTargets,
-                onSelectPlayer = handlePlayerCardClick
-            )
+            if (gameState.mode == GameMode.SEPARATE) {
+                SeparateCornerMiniBoardsRow(
+                    gameState = gameState,
+                    networkState = networkState,
+                    controlledPlayerId = controlledPlayerId,
+                    pendingSabotage = pendingSabotage,
+                    validSabotageTargets = validSabotageTargets,
+                    onSelectPlayer = handlePlayerCardClick
+                )
+            } else {
+                DualPlayerHud(
+                    gameState = gameState,
+                    networkState = networkState,
+                    controlledPlayerId = controlledPlayerId,
+                    pendingSabotage = pendingSabotage,
+                    validSabotageTargets = validSabotageTargets,
+                    onSelectPlayer = handlePlayerCardClick
+                )
+            }
 
-            AnimatedVisibility(visible = networkState.activeSabotagedPlayerIds.isNotEmpty()) {
+            AnimatedVisibility(visible = gameState.sabotageEnabled && networkState.activeSabotagedPlayerIds.isNotEmpty()) {
                 val targetId = networkState.activeSabotagedPlayerIds.firstOrNull()
                 Surface(
                     modifier = Modifier
@@ -1282,6 +1300,281 @@ private fun TopControlBar(
 }
 
 @Composable
+private fun SeparateCornerMiniBoardsRow(
+    gameState: GameState,
+    networkState: NetworkSessionState,
+    controlledPlayerId: Int,
+    pendingSabotage: SabotageType? = null,
+    validSabotageTargets: List<Int> = emptyList(),
+    onSelectPlayer: (Int) -> Unit
+) {
+    val isTeamsMode = gameState.versusSubMode == VersusSubMode.TEAMS_2V2
+    val otherIds = (1..gameState.config.playerCount).filter { it != controlledPlayerId }
+    val localName = networkState.players.firstOrNull { it.playerId == controlledPlayerId }
+        ?.displayName?.takeIf { it.isNotBlank() } ?: "P$controlledPlayerId"
+    val localScore = gameState.playerScores[controlledPlayerId] ?: 0
+    val localLines = gameState.playerLines[controlledPlayerId] ?: 0
+    val localNext = gameState.nextPieces[controlledPlayerId]
+    val localSkin = gameState.playerSkins[controlledPlayerId] ?: GameState.defaultSkinForPlayer(controlledPlayerId)
+    val localTeam = gameState.playerTeams[controlledPlayerId] ?: TeamColor.NONE
+    val localAccent = if (isTeamsMode && localTeam != TeamColor.NONE) {
+        if (localTeam == TeamColor.MAGENTA) NeonMagenta else CyberCyan
+    } else {
+        PlayerPalette.accentFor(controlledPlayerId)
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Compact Local Player Status + Next Piece Card
+        Surface(
+            modifier = Modifier
+                .weight(if (otherIds.size == 1) 1f else 0.95f)
+                .height(94.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = ElevatedCard,
+            border = BorderStroke(1.5.dp, localAccent.copy(alpha = 0.85f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = localName,
+                        color = localAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "LVL ${gameState.level}",
+                        color = TextSecondary,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "$localScore",
+                            color = TextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "${localLines}L",
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (localNext != null) {
+                        NextPiecePreviewCanvas(
+                            tetrominoType = localNext,
+                            playerId = controlledPlayerId,
+                            skinId = localSkin,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Corner Mini-Boards for all other players (1, 2, or 3 opponents/teammates)
+        otherIds.forEach { pid ->
+            val endpoint = networkState.players.firstOrNull { it.playerId == pid }
+            val nickname = endpoint?.displayName?.takeIf { it.isNotBlank() } ?: "P$pid"
+            val score = gameState.playerScores[pid] ?: 0
+            val team = gameState.playerTeams[pid] ?: TeamColor.NONE
+            val accent = if (isTeamsMode && team != TeamColor.NONE) {
+                if (team == TeamColor.MAGENTA) NeonMagenta else CyberCyan
+            } else {
+                PlayerPalette.accentFor(pid)
+            }
+            val isEliminated = gameState.isPlayerEliminated(pid) ||
+                gameState.isPlayerDisconnected(pid) ||
+                endpoint?.isDisconnected == true
+            val isTargetable = pendingSabotage != null && pid in validSabotageTargets
+
+            OpponentMiniBoardCard(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(94.dp),
+                playerId = pid,
+                nickname = nickname,
+                score = score,
+                accentColor = accent,
+                grid = gameState.boardGridFor(pid),
+                activePiece = gameState.activePieces[pid],
+                isEliminated = isEliminated,
+                isTargetable = isTargetable,
+                onClick = { onSelectPlayer(pid) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun OpponentMiniBoardCard(
+    modifier: Modifier = Modifier,
+    playerId: Int,
+    nickname: String,
+    score: Int,
+    accentColor: Color,
+    grid: List<List<LockedCell?>>,
+    activePiece: ActivePiece?,
+    isEliminated: Boolean,
+    isTargetable: Boolean,
+    onClick: () -> Unit
+) {
+    val strings = LocalStrings.current
+    val borderColor = when {
+        isTargetable -> ElectricGold
+        isEliminated -> TextSecondary.copy(alpha = 0.45f)
+        else -> accentColor.copy(alpha = 0.8f)
+    }
+
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = SlateSurface,
+        border = BorderStroke(if (isTargetable) 2.dp else 1.2.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(0.5f)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color(0xFF060911))
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val rows = grid.size.coerceAtLeast(1)
+                    val cols = (grid.firstOrNull()?.size ?: 10).coerceAtLeast(1)
+                    val cellW = size.width / cols.toFloat()
+                    val cellH = size.height / rows.toFloat()
+
+                    for (r in 0 until rows) {
+                        for (c in 0 until cols) {
+                            val cell = grid[r][c] ?: continue
+                            val renderer = SkinRegistry.resolve(cell.skinId)
+                            with(renderer) {
+                                drawBlock(
+                                    topLeft = Offset(c * cellW, r * cellH),
+                                    size = Size(cellW, cellH),
+                                    tetrominoType = cell.tetrominoType,
+                                    playerId = cell.playerId,
+                                    isGhost = false
+                                )
+                            }
+                        }
+                    }
+
+                    // Active falling piece stays visible on corner mini-boards even in Mystery Mode
+                    if (activePiece != null && !isEliminated) {
+                        val renderer = SkinRegistry.resolve(activePiece.skinId)
+                        for (cell in activePiece.occupiedCells()) {
+                            if (cell.x in 0 until cols && cell.y in 0 until rows) {
+                                with(renderer) {
+                                    drawBlock(
+                                        topLeft = Offset(cell.x * cellW, cell.y * cellH),
+                                        size = Size(cellW, cellH),
+                                        tetrominoType = activePiece.tetrominoType,
+                                        playerId = activePiece.playerId,
+                                        isGhost = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (isEliminated) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0xB8090D16)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = strings.eliminatedBadge,
+                            color = NeonMagenta,
+                            fontSize = 6.5.sp,
+                            fontWeight = FontWeight.Black,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = nickname,
+                    color = if (isEliminated) TextSecondary else accentColor,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "$score",
+                    color = if (isEliminated) TextSecondary else TextPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1
+                )
+                if (isEliminated) {
+                    Text(
+                        text = strings.eliminatedBadge,
+                        color = NeonMagenta,
+                        fontSize = 7.5.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else if (isTargetable) {
+                    Text(
+                        text = "⚡ HIT",
+                        color = ElectricGold,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DualPlayerHud(
     gameState: GameState,
     networkState: NetworkSessionState,
@@ -1588,9 +1881,15 @@ fun TetrisBoardCanvas(
         label = "sabotage_pulse"
     )
 
+    val isLocalClearEvent = gameState.mode != GameMode.SEPARATE ||
+        gameState.lineClearPlayerId == null ||
+        gameState.lineClearPlayerId == controlledPlayerId
     val lineClearFlash = remember { Animatable(0f) }
     LaunchedEffect(gameState.lineClearEventId) {
-        if (gameState.lineClearEventId > 0L && gameState.lastClearedRowIndices.isNotEmpty()) {
+        if (gameState.lineClearEventId > 0L &&
+            gameState.lastClearedRowIndices.isNotEmpty() &&
+            isLocalClearEvent
+        ) {
             lineClearFlash.snapTo(0f)
             lineClearFlash.animateTo(
                 targetValue = 1f,
@@ -1610,6 +1909,7 @@ fun TetrisBoardCanvas(
 
         // Subtle spawn zone background highlights (cols 1..4 for P1, 5..8 for P2, etc.)
         for (zone in gameState.config.spawnZones) {
+            if (gameState.mode == GameMode.SEPARATE && zone.playerId != controlledPlayerId) continue
             val isZoneSabotaged = zone.playerId in sabotagedPlayers
             val zoneColor = if (isZoneSabotaged) ElectricGold else PlayerPalette.accentFor(zone.playerId)
             val zoneLeft = zone.columnRange.first * cellW
@@ -1657,9 +1957,10 @@ fun TetrisBoardCanvas(
         }
 
         // 1. Draw locked blocks on board (preserving each player's skinId)
+        val boardGrid = gameState.boardGridFor(controlledPlayerId)
         for (r in 0 until rows) {
             for (c in 0 until cols) {
-                val cell = gameState.grid[r][c] ?: continue
+                val cell = boardGrid[r][c] ?: continue
                 val renderer = SkinRegistry.resolve(cell.skinId)
                 with(renderer) {
                     drawBlockCell(
@@ -1707,6 +2008,7 @@ fun TetrisBoardCanvas(
         // 3. Draw active falling pieces (100% opacity for local player, 45% opacity for others)
         val opponentPiecePaint = Paint().apply { alpha = 0.45f }
         for (piece in gameState.activePieces.values) {
+            if (gameState.mode == GameMode.SEPARATE && piece.playerId != controlledPlayerId) continue
             val isHiddenMystery = gameState.isPieceHiddenByMystery(piece)
             if (piece.playerId == controlledPlayerId && isHiddenMystery) {
                 continue
@@ -1798,7 +2100,7 @@ fun TetrisBoardCanvas(
 
         // 4. Line-clear flash bar & particle burst animation
         val clearProgress = lineClearFlash.value
-        if (gameState.lineClearEventId > 0L && clearProgress > 0f && clearProgress < 1f) {
+        if (gameState.lineClearEventId > 0L && clearProgress > 0f && clearProgress < 1f && isLocalClearEvent) {
             val fade = 1f - clearProgress
             for (rowIdx in gameState.lastClearedRowIndices) {
                 if (rowIdx !in 0 until rows) continue
@@ -2324,14 +2626,15 @@ private fun GameOverOverlay(
 ) {
     val winnerId = gameState.winnerPlayerId
     val winTeam = gameState.winningTeam
-    val isTeamsMode = gameState.mode == GameMode.VERSUS && gameState.versusSubMode == VersusSubMode.TEAMS_2V2
+    val isCompetitive = gameState.mode != GameMode.CO_OP
+    val isTeamsMode = isCompetitive && gameState.versusSubMode == VersusSubMode.TEAMS_2V2
     val localPlayerId = networkState.controlledPlayerId
     val isLocalTest = networkState.sessionMode == SessionMode.LOCAL_SIMULATION
     val matchEligibleForCoins = matchReward == null || matchReward.lines.isNotEmpty()
 
     val title = when {
         isTeamsMode && winTeam != null -> "${winTeam.label.uppercase()} WINS!"
-        gameState.mode == GameMode.VERSUS && winnerId != null -> {
+        isCompetitive && winnerId != null -> {
             val winnerName = networkState.players.firstOrNull { it.playerId == winnerId }
                 ?.displayName
                 ?.takeIf { it.isNotBlank() }
@@ -2359,7 +2662,7 @@ private fun GameOverOverlay(
                 0
             }
         }.thenBy { pid ->
-            if (gameState.mode == GameMode.VERSUS) {
+            if (isCompetitive) {
                 val p = gameState.placementFor(pid)
                 when {
                     p > 0 -> p
@@ -2508,7 +2811,7 @@ private fun GameOverOverlay(
                             playerId = pid,
                             rank = displayRank,
                             isCrown = !isDisconnected && (
-                                (gameState.mode == GameMode.VERSUS && (
+                                (isCompetitive && (
                                     (isTeamsMode && winTeam != null && team == winTeam) ||
                                         (!isTeamsMode && displayRank == 1)
                                     )) ||
@@ -2519,7 +2822,7 @@ private fun GameOverOverlay(
                             teamColor = if (isTeamsMode) team else TeamColor.NONE,
                             score = score,
                             linesCleared = lines,
-                            coinsEarned = if (gameState.mode == GameMode.VERSUS) coinsEarned else null,
+                            coinsEarned = if (isCompetitive) coinsEarned else null,
                             isLocalPlayer = pid == localPlayerId,
                             isDisconnected = isDisconnected
                         )

@@ -298,6 +298,106 @@ class TetrisBotControllerTest {
         )
     }
 
+    @Test
+    fun separateBoardsModeIsolatesPlayerGridsAndBotPlaysIndependently() {
+        val engine = MultiTetrisEngine()
+        val state = engine.startNewGame(
+            mode = GameMode.SEPARATE,
+            config = BoardConfig.forSeparateBoards(2),
+            playerSkins = mapOf(1 to "classic", 2 to "neon_cyber"),
+            currentTimeMillis = 1000L,
+            sabotageEnabled = true,
+            mysteryEnabled = true
+        )
+
+        assertEquals(10, state.config.width)
+        assertEquals(20, state.config.height)
+        assertEquals(3, state.activePieces[1]?.x)
+        assertEquals(3, state.activePieces[2]?.x)
+        assertEquals(2, state.separateGrids.size)
+
+        // Hard-drop P1 and verify only P1's board receives locked cells, not P2's
+        val afterP1Drop = engine.applyAction(1, PlayerAction.HARD_DROP, 1100L)
+        val p1LockedCount = afterP1Drop.boardGridFor(1).flatten().count { it != null }
+        val p2LockedCount = afterP1Drop.boardGridFor(2).flatten().count { it != null }
+        assertTrue("P1 board should have locked cells", p1LockedCount > 0)
+        assertEquals("P2 separate board must stay completely empty", 0, p2LockedCount)
+
+        // Bot P2 steers and hard-drops on its own independent 10x20 board
+        val bot = TetrisBotController(botPlayerId = 2, difficulty = BotDifficulty.NORMAL)
+        var working = afterP1Drop
+        var dropped = false
+        for (step in 0 until 25) {
+            val action = bot.nextAction(working) ?: break
+            working = engine.applyAction(2, action, 1200L + step * 100L)
+            if (action == PlayerAction.HARD_DROP) {
+                dropped = true
+                break
+            }
+        }
+        assertTrue("Bot should hard-drop on its own Separate board", dropped)
+        assertTrue(working.boardGridFor(2).flatten().count { it != null } > 0)
+    }
+
+    @Test
+    fun botNeverSpamsSabotagesAndRespectsSabotageOffAndMaxTwoCap() {
+        val engine = MultiTetrisEngine()
+        // 1. Sabotage OFF -> equippedSabotages must be empty and bot must never trigger
+        var offState = engine.startNewGame(
+            mode = GameMode.VERSUS,
+            config = BoardConfig.forPlayerCount(2),
+            playerSkins = mapOf(1 to "classic", 2 to "neon_cyber"),
+            currentTimeMillis = 1000L,
+            sabotageEnabled = false
+        )
+        assertTrue(offState.equippedSabotages.isEmpty())
+        val bot = TetrisBotController(botPlayerId = 2, difficulty = BotDifficulty.NORMAL)
+        assertNull(bot.maybeSelectSabotage(offState, 50_000L))
+
+        // 2. Sabotage ON -> max 2 sabotages, minimum 13s cooldown, stops if target eliminated
+        var onState = engine.startNewGame(
+            mode = GameMode.VERSUS,
+            config = BoardConfig.forPlayerCount(2),
+            playerSkins = mapOf(1 to "classic", 2 to "neon_cyber"),
+            currentTimeMillis = 1000L,
+            sabotageEnabled = true,
+            equippedSabotages = mapOf(
+                1 to listOf(SabotageType.BUTTON_FREEZE, SabotageType.BLINDFOLD_FOG),
+                2 to listOf(SabotageType.TURBO_DROP, SabotageType.CONTROLS_FLIP)
+            )
+        )
+        val highStackGrid = onState.grid.mapIndexed { r, row ->
+            if (r == 6) {
+                row.mapIndexed { c, cell ->
+                    if (c == 1) LockedCell(1, TetrominoType.O, "classic") else cell
+                }
+            } else {
+                row
+            }
+        }
+        onState = onState.copy(grid = highStackGrid)
+
+        val first = bot.maybeSelectSabotage(onState, 20_000L)
+        assertNotNull(first)
+        assertEquals(SabotageType.TURBO_DROP, first?.second)
+        onState = engine.setStateForTest(onState).let {
+            engine.useSabotage(2, 1, SabotageType.TURBO_DROP, "Bot")
+        }.copy(activeSabotages = emptyMap())
+
+        // Within 13s cooldown -> must return null
+        assertNull(bot.maybeSelectSabotage(onState, 25_000L))
+
+        // After 13s cooldown -> uses 2nd sabotage
+        val second = bot.maybeSelectSabotage(onState, 34_000L)
+        assertNotNull(second)
+        assertEquals(SabotageType.CONTROLS_FLIP, second?.second)
+        onState = engine.useSabotage(2, 1, SabotageType.CONTROLS_FLIP, "Bot")
+            .copy(activeSabotages = emptyMap())
+
+        // After 2nd sabotage -> inventory exhausted, must return null forever
+        assertNull(bot.maybeSelectSabotage(onState, 60_000L))
+    }
+
     private fun applyActionToState(state: GameState, playerId: Int, action: PlayerAction): GameState {
         val piece = state.activePieces[playerId] ?: return state
         val rows = state.config.height

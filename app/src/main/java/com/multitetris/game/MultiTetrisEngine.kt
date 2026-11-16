@@ -41,31 +41,41 @@ class MultiTetrisEngine(
     ): GameState {
         playerBags.clear()
         coopGlitchElapsedMs = 0L
-        val emptyGrid = List(config.height) { List<LockedCell?>(config.width) { null } }
+        val effectiveConfig = if (mode == GameMode.SEPARATE && !config.separateBoards) {
+            BoardConfig.forSeparateBoards(config.playerCount, config.height)
+        } else {
+            config
+        }
+        val emptyGrid = List(effectiveConfig.height) { List<LockedCell?>(effectiveConfig.width) { null } }
+        val separateGrids = if (mode == GameMode.SEPARATE) {
+            effectiveConfig.spawnZones.associate { it.playerId to emptyGrid }
+        } else {
+            emptyMap()
+        }
         val activePieces = mutableMapOf<Int, ActivePiece>()
         val nextPieces = mutableMapOf<Int, TetrominoType>()
         val scores = mutableMapOf<Int, Int>()
         val lines = mutableMapOf<Int, Int>()
 
-        val resolvedTeams: Map<Int, TeamColor> = if (mode == GameMode.VERSUS && versusSubMode == VersusSubMode.TEAMS_2V2) {
+        val resolvedTeams: Map<Int, TeamColor> = if (mode != GameMode.CO_OP && versusSubMode == VersusSubMode.TEAMS_2V2) {
             if (playerTeams.isNotEmpty()) {
-                config.spawnZones.associate { zone ->
+                effectiveConfig.spawnZones.associate { zone ->
                     zone.playerId to (playerTeams[zone.playerId] ?: if (zone.playerId <= 2) TeamColor.CYAN else TeamColor.MAGENTA)
                 }
             } else {
-                config.spawnZones.associate { zone ->
+                effectiveConfig.spawnZones.associate { zone ->
                     zone.playerId to if (zone.playerId <= 2) TeamColor.CYAN else TeamColor.MAGENTA
                 }
             }
         } else {
-            config.spawnZones.associate { it.playerId to TeamColor.NONE }
+            effectiveConfig.spawnZones.associate { it.playerId to TeamColor.NONE }
         }
 
-        val resolvedSkins = config.spawnZones.associate { zone ->
+        val resolvedSkins = effectiveConfig.spawnZones.associate { zone ->
             zone.playerId to (playerSkins[zone.playerId] ?: GameState.defaultSkinForPlayer(zone.playerId))
         }
 
-        for (zone in config.spawnZones) {
+        for (zone in effectiveConfig.spawnZones) {
             val playerId = zone.playerId
             val firstType = drawFromBag(playerId)
             val nextType = drawFromBag(playerId)
@@ -83,19 +93,24 @@ class MultiTetrisEngine(
             lines[playerId] = 0
         }
 
-        val resolvedEquipped = config.spawnZones.associate { zone ->
-            zone.playerId to SabotageConfig.resolveLoadout(
-                equippedSabotages[zone.playerId] ?: SabotageConfig.defaultLoadout
-            )
+        val resolvedEquipped = if (sabotageEnabled) {
+            effectiveConfig.spawnZones.associate { zone ->
+                zone.playerId to SabotageConfig.resolveLoadout(
+                    equippedSabotages[zone.playerId] ?: SabotageConfig.defaultLoadout
+                )
+            }
+        } else {
+            emptyMap()
         }
-        val initialUsed = config.spawnZones.associate { it.playerId to emptySet<SabotageType>() }
+        val initialUsed = effectiveConfig.spawnZones.associate { it.playerId to emptySet<SabotageType>() }
 
         val initialState = GameState(
-            config = config,
+            config = effectiveConfig,
             mode = mode,
-            versusSubMode = if (mode == GameMode.VERSUS) versusSubMode else VersusSubMode.FREE_FOR_ALL,
+            versusSubMode = if (mode != GameMode.CO_OP) versusSubMode else VersusSubMode.FREE_FOR_ALL,
             playerTeams = resolvedTeams,
             grid = emptyGrid,
+            separateGrids = separateGrids,
             activePieces = activePieces,
             nextPieces = nextPieces,
             playerSkins = resolvedSkins,
@@ -154,11 +169,10 @@ class MultiTetrisEngine(
 
     fun getDropIntervalMs(playerId: Int, currentTimeMillis: Long): Long {
         val baseInterval = max(MIN_DROP_INTERVAL_MS, BASE_DROP_INTERVAL_MS - (state.level - 1) * LEVEL_SPEED_STEP_MS)
+        if (!state.sabotageEnabled) return baseInterval
         return when {
             state.activeSabotageFor(playerId)?.type == SabotageType.TURBO_DROP ->
                 (baseInterval / 3L).coerceAtLeast(40L)
-            !state.sabotageEnabled && state.isSabotaged(playerId, currentTimeMillis) ->
-                SABOTAGE_DROP_INTERVAL_MS
             else -> baseInterval
         }
     }
@@ -192,8 +206,8 @@ class MultiTetrisEngine(
         val piece = state.activePieces[playerId] ?: return state
 
         val collision = canOccupy(
-            grid = state.grid,
-            activePieces = state.activePieces,
+            grid = gridFor(state, playerId),
+            activePieces = boardPeersFor(state),
             config = state.config,
             piece = piece,
             candidateX = piece.x,
@@ -234,8 +248,8 @@ class MultiTetrisEngine(
     private fun tryMoveHorizontal(piece: ActivePiece, dx: Int): GameState {
         val candidateX = piece.x + dx
         val collision = canOccupy(
-            grid = state.grid,
-            activePieces = state.activePieces,
+            grid = gridFor(state, piece.playerId),
+            activePieces = boardPeersFor(state),
             config = state.config,
             piece = piece,
             candidateX = candidateX,
@@ -260,8 +274,8 @@ class MultiTetrisEngine(
             val candidateX = piece.x + kickX
             val candidateY = piece.y + kickY
             val collision = canOccupy(
-                grid = state.grid,
-                activePieces = state.activePieces,
+                grid = gridFor(state, piece.playerId),
+                activePieces = boardPeersFor(state),
                 config = state.config,
                 piece = piece,
                 candidateX = candidateX,
@@ -291,8 +305,8 @@ class MultiTetrisEngine(
 
         while (true) {
             val nextCollision = canOccupy(
-                grid = state.grid,
-                activePieces = state.activePieces,
+                grid = gridFor(state, playerId),
+                activePieces = boardPeersFor(state),
                 config = state.config,
                 piece = piece,
                 candidateX = piece.x,
@@ -308,8 +322,8 @@ class MultiTetrisEngine(
         }
 
         val stopReason = canOccupy(
-            grid = state.grid,
-            activePieces = state.activePieces,
+            grid = gridFor(state, playerId),
+            activePieces = boardPeersFor(state),
             config = state.config,
             piece = piece,
             candidateX = piece.x,
@@ -336,7 +350,8 @@ class MultiTetrisEngine(
         currentTimeMillis: Long,
         dropBonus: Int
     ): GameState {
-        val mutableGrid = state.grid.map { it.toMutableList() }.toMutableList()
+        val sourceGrid = gridFor(state, piece.playerId)
+        val mutableGrid = sourceGrid.map { it.toMutableList() }.toMutableList()
         for (cell in piece.occupiedCells()) {
             if (cell.y in 0 until state.config.height && cell.x in 0 until state.config.width) {
                 mutableGrid[cell.y][cell.x] = LockedCell(
@@ -363,6 +378,7 @@ class MultiTetrisEngine(
         }
         val nextClearEventId = if (clearedCount > 0) state.lineClearEventId + 1L else state.lineClearEventId
         val nextClearedRows = if (clearedCount > 0) clearedRowIndices else state.lastClearedRowIndices
+        val nextClearPlayerId = if (clearedCount > 0) piece.playerId else state.lineClearPlayerId
 
         val lineScore = lineClearPoints(clearedCount, state.level)
         val totalAwarded = lineScore + dropBonus
@@ -385,31 +401,6 @@ class MultiTetrisEngine(
             newSharedScore = newPlayerScores.values.sum()
             newSharedLines = newPlayerLines.values.sum()
             newLevel = 1 + (newSharedLines / LINES_PER_LEVEL)
-
-            if (clearedCount > 0) {
-                val expiresAt = currentTimeMillis + SABOTAGE_DURATION_MS
-                val attackerTeam = state.playerTeams[piece.playerId] ?: TeamColor.NONE
-                for (zone in state.config.spawnZones) {
-                    if (zone.playerId == piece.playerId) continue
-                    if (zone.playerId in state.eliminatedPlayerIds ||
-                        zone.playerId in state.blockedPlayerIds ||
-                        zone.playerId in state.disconnectedPlayerIds
-                    ) continue
-                    val targetTeam = state.playerTeams[zone.playerId] ?: TeamColor.NONE
-                    val isTeammate = state.versusSubMode == VersusSubMode.TEAMS_2V2 &&
-                        attackerTeam != TeamColor.NONE &&
-                        targetTeam == attackerTeam
-                    if (!isTeammate) {
-                        newSabotageUntil[zone.playerId] = expiresAt
-                        newSabotageEvent = SabotageEvent(
-                            attackerPlayerId = piece.playerId,
-                            targetPlayerId = zone.playerId,
-                            linesCleared = clearedCount,
-                            expiresAtMillis = expiresAt
-                        )
-                    }
-                }
-            }
         }
 
         // Prepare next piece for this player
@@ -494,7 +485,7 @@ class MultiTetrisEngine(
                     level = newLevel,
                     playerScores = newPlayerScores,
                     playerLines = newPlayerLines,
-                    sabotageBurstUntilMillis = newSabotageUntil,
+                    sabotageBurstUntilMillis = emptyMap(),
                     lastSabotageEvent = newSabotageEvent,
                     blockedPlayerIds = newBlockedIds,
                     feedToastMessage = feedToast ?: state.feedToastMessage,
@@ -505,7 +496,8 @@ class MultiTetrisEngine(
                     topOutPlayerId = piece.playerId,
                     statusMessage = "All players blocked! Co-op run ended at Level $newLevel.",
                     lastClearedRowIndices = nextClearedRows,
-                    lineClearEventId = nextClearEventId
+                    lineClearEventId = nextClearEventId,
+                    lineClearPlayerId = nextClearPlayerId
                 )
                 return state
             }
@@ -525,13 +517,25 @@ class MultiTetrisEngine(
                 feedToastMessage = feedToast ?: state.feedToastMessage,
                 feedToastEventId = nextFeedEventId,
                 lastClearedRowIndices = nextClearedRows,
-                lineClearEventId = nextClearEventId
+                lineClearEventId = nextClearEventId,
+                lineClearPlayerId = nextClearPlayerId
             )
             state = refreshPauseFlagsAndGhosts(updatedState)
             return state
         }
 
-        // VERSUS MODE (2P, 3P, 4P FFA & 4P 2v2 Teams)
+        val updatedSeparateGrids = if (state.mode == GameMode.SEPARATE) {
+            state.separateGrids + (piece.playerId to clearedGrid)
+        } else {
+            state.separateGrids
+        }
+        val mainGrid = if (state.mode == GameMode.SEPARATE) {
+            updatedSeparateGrids[1] ?: state.grid
+        } else {
+            clearedGrid
+        }
+
+        // VERSUS & SEPARATE MODES (2P, 3P, 4P FFA & Teams)
         val newEliminatedIds = state.eliminatedPlayerIds.toMutableSet()
         val newPlacements = state.playerPlacements.toMutableMap()
         val newlyEliminated = mutableListOf<Int>()
@@ -539,6 +543,7 @@ class MultiTetrisEngine(
 
         for (zone in state.config.spawnZones) {
             if (zone.playerId in newEliminatedIds) continue
+            if (state.mode == GameMode.SEPARATE && zone.playerId != piece.playerId) continue
             val pieceBlocked = zone.playerId == piece.playerId && spawnBlockedByLocked
             if (isRow0Blocked(zone) || pieceBlocked) {
                 newlyEliminated.add(zone.playerId)
@@ -551,6 +556,7 @@ class MultiTetrisEngine(
                 newEliminatedIds.add(elimId)
                 updatedActive.remove(elimId)
                 updatedSabotages.remove(elimId)
+                newSabotageUntil.remove(elimId)
                 val aliveAfter = state.config.spawnZones.count { it.playerId !in newEliminatedIds }
                 newPlacements[elimId] = aliveAfter + 1
                 feedToast = "P$elimId was eliminated!"
@@ -590,7 +596,8 @@ class MultiTetrisEngine(
                         ?.playerId
                     val lastElim = newlyEliminated.last()
                     state = state.copy(
-                        grid = clearedGrid,
+                        grid = mainGrid,
+                        separateGrids = updatedSeparateGrids,
                         activePieces = emptyMap(),
                         ghostPieces = emptyMap(),
                         nextPieces = updatedNext,
@@ -599,7 +606,7 @@ class MultiTetrisEngine(
                         level = newLevel,
                         playerScores = newPlayerScores,
                         playerLines = newPlayerLines,
-                        sabotageBurstUntilMillis = newSabotageUntil,
+                        sabotageBurstUntilMillis = emptyMap(),
                         lastSabotageEvent = newSabotageEvent,
                         activeSabotages = emptyMap(),
                         systemGlitchWarningActive = false,
@@ -613,7 +620,8 @@ class MultiTetrisEngine(
                         topOutPlayerId = lastElim,
                         statusMessage = "${resolvedTeam.label} wins!",
                         lastClearedRowIndices = nextClearedRows,
-                        lineClearEventId = nextClearEventId
+                        lineClearEventId = nextClearEventId,
+                        lineClearPlayerId = nextClearPlayerId
                     )
                     return state
                 }
@@ -631,7 +639,8 @@ class MultiTetrisEngine(
                     ?.playerId
                 val lastElim = newlyEliminated.last()
                 state = state.copy(
-                    grid = clearedGrid,
+                    grid = mainGrid,
+                    separateGrids = updatedSeparateGrids,
                     activePieces = emptyMap(),
                     ghostPieces = emptyMap(),
                     nextPieces = updatedNext,
@@ -640,7 +649,7 @@ class MultiTetrisEngine(
                     level = newLevel,
                     playerScores = newPlayerScores,
                     playerLines = newPlayerLines,
-                    sabotageBurstUntilMillis = newSabotageUntil,
+                    sabotageBurstUntilMillis = emptyMap(),
                     lastSabotageEvent = newSabotageEvent,
                     activeSabotages = emptyMap(),
                     systemGlitchWarningActive = false,
@@ -658,14 +667,16 @@ class MultiTetrisEngine(
                         "Match over!"
                     },
                     lastClearedRowIndices = nextClearedRows,
-                    lineClearEventId = nextClearEventId
+                    lineClearEventId = nextClearEventId,
+                    lineClearPlayerId = nextClearPlayerId
                 )
                 return state
             }
 
             // Match continues with remaining alive players/teams!
             val updatedState = state.copy(
-                grid = clearedGrid,
+                grid = mainGrid,
+                separateGrids = updatedSeparateGrids,
                 activePieces = updatedActive,
                 nextPieces = updatedNext,
                 sharedScore = newSharedScore,
@@ -681,14 +692,16 @@ class MultiTetrisEngine(
                 feedToastMessage = feedToast,
                 feedToastEventId = nextFeedEventId,
                 lastClearedRowIndices = nextClearedRows,
-                lineClearEventId = nextClearEventId
+                lineClearEventId = nextClearEventId,
+                lineClearPlayerId = nextClearPlayerId
             )
             state = refreshPauseFlagsAndGhosts(updatedState)
             return state
         }
 
         val updatedState = state.copy(
-            grid = clearedGrid,
+            grid = mainGrid,
+            separateGrids = updatedSeparateGrids,
             activePieces = updatedActive,
             nextPieces = updatedNext,
             sharedScore = newSharedScore,
@@ -699,7 +712,8 @@ class MultiTetrisEngine(
             sabotageBurstUntilMillis = newSabotageUntil,
             lastSabotageEvent = newSabotageEvent,
             lastClearedRowIndices = nextClearedRows,
-            lineClearEventId = nextClearEventId
+            lineClearEventId = nextClearEventId,
+            lineClearPlayerId = nextClearPlayerId
         )
 
         state = refreshPauseFlagsAndGhosts(updatedState)
@@ -879,13 +893,16 @@ class MultiTetrisEngine(
         sabotageType: SabotageType,
         attackerLabel: String? = null
     ): GameState {
-        if (state.isPaused || state.isGameOver || !state.sabotageEnabled || state.mode != GameMode.VERSUS) {
+        if (state.isPaused || state.isGameOver || !state.sabotageEnabled || state.mode == GameMode.CO_OP) {
             return state
         }
         if (state.isPlayerEliminated(attackerPlayerId) || state.isPlayerDisconnected(attackerPlayerId)) {
             return state
         }
         if (sabotageType !in state.equippedSabotagesFor(attackerPlayerId)) {
+            return state
+        }
+        if (state.usedSabotagesFor(attackerPlayerId).size >= SabotageConfig.MAX_DRAFT_SLOTS) {
             return state
         }
         if (sabotageType in state.usedSabotagesFor(attackerPlayerId)) {
@@ -1012,22 +1029,38 @@ class MultiTetrisEngine(
         }
     }
 
+    private fun gridFor(s: GameState, playerId: Int): List<List<LockedCell?>> =
+        s.boardGridFor(playerId)
+
+    private fun boardPeersFor(s: GameState): Map<Int, ActivePiece> =
+        if (s.mode == GameMode.SEPARATE) emptyMap() else s.activePieces
+
     private fun refreshPauseFlagsAndGhosts(currentState: GameState): GameState {
+        val peers = boardPeersFor(currentState)
         val refreshedActive = currentState.activePieces.mapValues { (_, piece) ->
-            val belowCollision = canOccupy(
-                grid = currentState.grid,
-                activePieces = currentState.activePieces,
-                config = currentState.config,
-                piece = piece,
-                candidateX = piece.x,
-                candidateY = piece.y + 1,
-                candidateRotation = piece.rotation
-            )
-            piece.copy(isPausedByPiece = belowCollision == CollisionResult.ACTIVE_PIECE)
+            if (currentState.mode == GameMode.SEPARATE) {
+                piece.copy(isPausedByPiece = false)
+            } else {
+                val belowCollision = canOccupy(
+                    grid = gridFor(currentState, piece.playerId),
+                    activePieces = peers,
+                    config = currentState.config,
+                    piece = piece,
+                    candidateX = piece.x,
+                    candidateY = piece.y + 1,
+                    candidateRotation = piece.rotation
+                )
+                piece.copy(isPausedByPiece = belowCollision == CollisionResult.ACTIVE_PIECE)
+            }
         }
 
         val ghosts = refreshedActive.mapValues { (_, piece) ->
-            computeGhostPiece(currentState.grid, refreshedActive, currentState.config, piece)
+            computeGhostPiece(
+                grid = gridFor(currentState, piece.playerId),
+                activePieces = if (currentState.mode == GameMode.SEPARATE) emptyMap() else refreshedActive,
+                config = currentState.config,
+                piece = piece
+            )
         }
 
         return currentState.copy(

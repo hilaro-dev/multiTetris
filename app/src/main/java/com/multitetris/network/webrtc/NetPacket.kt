@@ -107,6 +107,7 @@ data class GameStatePacket(
     val playerSkins: Map<Int, String> = emptyMap(),
     val lastClearedRowIndices: List<Int> = emptyList(),
     val lineClearEventId: Long = 0L,
+    val lineClearPlayerId: Int? = null,
     val playerCount: Int = 2,
     val versusSubMode: String = VersusSubMode.FREE_FOR_ALL.name,
     val playerTeams: Map<Int, String> = emptyMap(),
@@ -124,7 +125,8 @@ data class GameStatePacket(
     val activeSabotages: Map<Int, ActiveSabotageState> = emptyMap(),
     val systemGlitchWarningActive: Boolean = false,
     val mysteryEnabled: Boolean = false,
-    val playerUids: Map<Int, String> = emptyMap()
+    val playerUids: Map<Int, String> = emptyMap(),
+    val separateGrids: Map<Int, List<IntArray>> = emptyMap()
 ) : NetPacket {
 
     fun toClientGameState(
@@ -143,10 +145,19 @@ data class GameStatePacket(
             activePieces.maxOfOrNull { it.playerId } ?: 2,
             playerTeams.keys.maxOrNull() ?: 2
         )
-        val config = BoardConfig(width = width, height = height, playerCount = inferredPlayers)
+        val config = if (mode == GameMode.SEPARATE) {
+            BoardConfig.forSeparateBoards(playerCount = inferredPlayers, height = height)
+        } else {
+            BoardConfig(width = width, height = height, playerCount = inferredPlayers)
+        }
 
         val decodedGrid = grid.map { row ->
             row.map { packed -> GridCellCodec.decode(packed) }
+        }
+        val decodedSeparateGrids = separateGrids.mapValues { (_, playerGrid) ->
+            playerGrid.map { row ->
+                row.map { packed -> GridCellCodec.decode(packed) }
+            }
         }
         val activeMap = activePieces.associate { pieceState ->
             pieceState.playerId to pieceState.toActivePiece()
@@ -154,8 +165,14 @@ data class GameStatePacket(
         val ghostMap = if (isGameOver) {
             emptyMap()
         } else {
-            activeMap.mapValues { (_, piece) ->
-                ghostCalculator.computeGhostPiece(decodedGrid, activeMap, config, piece)
+            activeMap.mapValues { (pid, piece) ->
+                val targetGrid = if (mode == GameMode.SEPARATE) {
+                    decodedSeparateGrids[pid] ?: decodedGrid
+                } else {
+                    decodedGrid
+                }
+                val peerPieces = if (mode == GameMode.SEPARATE) emptyMap() else activeMap
+                ghostCalculator.computeGhostPiece(targetGrid, peerPieces, config, piece)
             }
         }
         val sabotageUntil = sabotagedPlayerIds.associateWith { localClockMillis + 500L }
@@ -174,6 +191,7 @@ data class GameStatePacket(
             versusSubMode = resolvedSubMode,
             playerTeams = resolvedTeams,
             grid = decodedGrid,
+            separateGrids = decodedSeparateGrids,
             activePieces = activeMap,
             ghostPieces = ghostMap,
             nextPieces = nextPieces,
@@ -193,6 +211,7 @@ data class GameStatePacket(
             statusMessage = statusMessage,
             lastClearedRowIndices = lastClearedRowIndices,
             lineClearEventId = lineClearEventId,
+            lineClearPlayerId = lineClearPlayerId,
             eliminatedPlayerIds = eliminatedPlayerIds,
             playerPlacements = playerPlacements,
             blockedPlayerIds = blockedPlayerIds,
@@ -219,6 +238,13 @@ data class GameStatePacket(
             val encodedGrid = state.grid.map { row ->
                 IntArray(row.size) { col -> GridCellCodec.encode(row[col]) }
             }
+            val encodedSeparateGrids = if (state.mode == GameMode.SEPARATE) {
+                state.separateGrids.mapValues { (_, playerGrid) ->
+                    playerGrid.map { row -> IntArray(row.size) { col -> GridCellCodec.encode(row[col]) } }
+                }
+            } else {
+                emptyMap()
+            }
             val activeList = state.activePieces.values.map { PieceState.fromActivePiece(it) }
             val sabotagedIds = state.activePieces.keys
                 .filter { playerId -> state.isSabotaged(playerId, nowMillis) }
@@ -244,6 +270,7 @@ data class GameStatePacket(
                 playerSkins = state.playerSkins,
                 lastClearedRowIndices = state.lastClearedRowIndices,
                 lineClearEventId = state.lineClearEventId,
+                lineClearPlayerId = state.lineClearPlayerId,
                 playerCount = state.config.playerCount,
                 versusSubMode = state.versusSubMode.name,
                 playerTeams = state.playerTeams.mapValues { it.value.name },
@@ -261,7 +288,8 @@ data class GameStatePacket(
                 activeSabotages = state.activeSabotages,
                 systemGlitchWarningActive = state.systemGlitchWarningActive,
                 mysteryEnabled = state.mysteryEnabled,
-                playerUids = playerUids
+                playerUids = playerUids,
+                separateGrids = encodedSeparateGrids
             )
         }
     }

@@ -186,10 +186,10 @@ class WebRtcSessionController(
         if (room.myRole != MatchRole.HOST) return
 
         val now = clockMillis()
-        val resolvedEquipped = if (equippedSabotages.isNotEmpty()) {
-            equippedSabotages
-        } else {
-            syncedSabotages.toMap()
+        val resolvedEquipped = when {
+            !sabotageEnabled || mode == GameMode.CO_OP -> emptyMap()
+            equippedSabotages.isNotEmpty() -> equippedSabotages
+            else -> syncedSabotages.toMap()
         }
         val initial = synchronized(engineLock) {
             lastDropTimeMs.clear()
@@ -365,7 +365,11 @@ class WebRtcSessionController(
         startSession(
             mode = updatedRoom.mode,
             playerSkins = newSkins,
-            config = BoardConfig.forPlayerCount(remappedPlayers.size.coerceIn(2, 4)),
+            config = if (updatedRoom.mode == GameMode.SEPARATE) {
+                BoardConfig.forSeparateBoards(remappedPlayers.size.coerceIn(2, 4))
+            } else {
+                BoardConfig.forPlayerCount(remappedPlayers.size.coerceIn(2, 4))
+            },
             versusSubMode = updatedRoom.versusSubMode,
             playerTeams = newTeams,
             sabotageEnabled = updatedRoom.sabotageEnabled,
@@ -526,7 +530,11 @@ class WebRtcSessionController(
             startSession(
                 mode = room.mode,
                 playerSkins = syncedSkins.toMap(),
-                config = BoardConfig.forPlayerCount(playerCount),
+                config = if (room.mode == GameMode.SEPARATE) {
+                    BoardConfig.forSeparateBoards(playerCount)
+                } else {
+                    BoardConfig.forPlayerCount(playerCount)
+                },
                 versusSubMode = room.versusSubMode,
                 playerTeams = teamsMap,
                 sabotageEnabled = room.sabotageEnabled,
@@ -621,6 +629,10 @@ class WebRtcSessionController(
 
             is UseSabotagePacket -> {
                 if (room.myRole != MatchRole.HOST) return
+                val current = synchronized(engineLock) { hostEngine.state }
+                if (!current.sabotageEnabled || current.mode == GameMode.CO_OP || current.isPaused || current.isGameOver) {
+                    return
+                }
                 val attackerSlot = activeUidsBySlot.entries.firstOrNull {
                     it.value == packet.attackerUid || it.value == incoming.fromUid
                 }?.key
@@ -741,7 +753,11 @@ class WebRtcSessionController(
                             val lastBotAction = lastBotActionTimeMs[botPlayerId] ?: 0L
                             if (now - lastBotAction >= botDifficulty.stepDelayMs) {
                                 lastBotActionTimeMs[botPlayerId] = now
-                                val sabChoice = botController.maybeSelectSabotage(workingState, now)
+                                val sabChoice = if (workingState.sabotageEnabled && workingState.mode != GameMode.CO_OP) {
+                                    botController.maybeSelectSabotage(workingState, now)
+                                } else {
+                                    null
+                                }
                                 if (sabChoice != null) {
                                     workingState = hostEngine.useSabotage(
                                         attackerPlayerId = botPlayerId,

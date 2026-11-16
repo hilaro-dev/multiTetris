@@ -1077,6 +1077,25 @@ class FirebaseSocialManager(
         }
     }
 
+    fun setRoomMode(mode: GameMode) {
+        val db = database ?: return
+        val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
+            ?: return
+        if (room.myRole != MatchRole.HOST) return
+        _socialState.update { state ->
+            val current = (state.matchmakingState as? MatchmakingState.MatchFound) ?: return@update state
+            state.copy(
+                matchmakingState = current.copy(
+                    room = current.room.copy(mode = mode)
+                )
+            )
+        }
+        db.getReference("matches")
+            .child(room.matchId)
+            .child("mode")
+            .setValue(mode.name)
+    }
+
     fun setRoomVersusSubMode(subMode: VersusSubMode) {
         val db = database ?: return
         val room = (_socialState.value.matchmakingState as? MatchmakingState.MatchFound)?.room
@@ -1179,7 +1198,7 @@ class FirebaseSocialManager(
 
         clearSentRoomInvites()
         val matchRef = db.getReference("matches").child(room.matchId)
-        if (room.sabotageEnabled && room.mode == GameMode.VERSUS) {
+        if (room.sabotageEnabled && room.mode != GameMode.CO_OP) {
             val updates = mutableMapOf<String, Any?>()
             for (slot in room.resolvedPlayers()) {
                 if (slot.selectedSabotages.size < SabotageConfig.MAX_DRAFT_SLOTS) {

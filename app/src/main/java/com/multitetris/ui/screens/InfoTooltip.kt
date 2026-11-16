@@ -70,6 +70,13 @@ object GameInfoCatalog {
             description = strings.tooltipVersusDesc,
             accentColor = NeonMagenta
         )
+
+        GameMode.SEPARATE -> InfoTooltipData(
+            title = strings.tooltipSeparateTitle,
+            badge = if (strings === EnStrings) "INDIVIDUAL 10x20" else "BAĞIMSIZ 10x20",
+            description = strings.tooltipSeparateDesc,
+            accentColor = ElectricGold
+        )
     }
 
     fun forVersusSubMode(subMode: VersusSubMode, strings: AppStrings = EnStrings): InfoTooltipData = when (subMode) {

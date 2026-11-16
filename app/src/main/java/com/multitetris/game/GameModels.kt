@@ -78,7 +78,8 @@ enum class TetrominoType(
 
 enum class GameMode(val label: String) {
     CO_OP("CO-OP"),
-    VERSUS("VERSUS")
+    VERSUS("VERSUS"),
+    SEPARATE("SEPARATE")
 }
 
 enum class VersusSubMode(val label: String) {
@@ -150,7 +151,8 @@ data class SpawnZone(
 data class BoardConfig(
     val width: Int = 10,
     val height: Int = 20,
-    val playerCount: Int = 2
+    val playerCount: Int = 2,
+    val separateBoards: Boolean = false
 ) {
     init {
         require(width >= 4) { "Board width must be at least 4" }
@@ -158,7 +160,18 @@ data class BoardConfig(
         require(playerCount >= 1) { "Player count must be at least 1" }
     }
 
-    val spawnZones: List<SpawnZone> = buildSpawnZones(width, playerCount)
+    val spawnZones: List<SpawnZone> = if (separateBoards) {
+        (1..playerCount).map { pid ->
+            SpawnZone(
+                playerId = pid,
+                spawnX = ((width - 4) / 2).coerceAtLeast(0),
+                spawnY = 0,
+                columnRange = 0 until width
+            )
+        }
+    } else {
+        buildSpawnZones(width, playerCount)
+    }
 
     fun spawnZoneFor(playerId: Int): SpawnZone {
         return spawnZones.first { it.playerId == playerId }
@@ -170,6 +183,15 @@ data class BoardConfig(
                 width = recommendedBoardWidth(playerCount),
                 height = height,
                 playerCount = playerCount
+            )
+        }
+
+        fun forSeparateBoards(playerCount: Int, height: Int = 20): BoardConfig {
+            return BoardConfig(
+                width = 10,
+                height = height,
+                playerCount = playerCount,
+                separateBoards = true
             )
         }
 
@@ -281,6 +303,7 @@ data class GameState(
     val versusSubMode: VersusSubMode = VersusSubMode.FREE_FOR_ALL,
     val playerTeams: Map<Int, TeamColor> = emptyMap(),
     val grid: List<List<LockedCell?>> = List(config.height) { List(config.width) { null } },
+    val separateGrids: Map<Int, List<List<LockedCell?>>> = emptyMap(),
     val activePieces: Map<Int, ActivePiece> = emptyMap(),
     val ghostPieces: Map<Int, ActivePiece> = emptyMap(),
     val nextPieces: Map<Int, TetrominoType> = emptyMap(),
@@ -306,6 +329,7 @@ data class GameState(
     val statusMessage: String? = null,
     val lastClearedRowIndices: List<Int> = emptyList(),
     val lineClearEventId: Long = 0L,
+    val lineClearPlayerId: Int? = null,
     val sabotageEnabled: Boolean = false,
     val equippedSabotages: Map<Int, List<SabotageType>> = emptyMap(),
     val usedSabotages: Map<Int, Set<SabotageType>> = emptyMap(),
@@ -323,7 +347,8 @@ data class GameState(
 
     fun placementFor(playerId: Int): Int = playerPlacements[playerId] ?: 0
 
-    fun activeSabotageFor(playerId: Int): ActiveSabotageState? = activeSabotages[playerId]
+    fun activeSabotageFor(playerId: Int): ActiveSabotageState? =
+        if (!sabotageEnabled) null else activeSabotages[playerId]
 
     fun equippedSabotagesFor(playerId: Int): List<SabotageType> =
         equippedSabotages[playerId] ?: SabotageConfig.defaultLoadout
@@ -331,8 +356,11 @@ data class GameState(
     fun usedSabotagesFor(playerId: Int): Set<SabotageType> =
         usedSabotages[playerId] ?: emptySet()
 
+    fun boardGridFor(playerId: Int): List<List<LockedCell?>> =
+        if (mode == GameMode.SEPARATE) separateGrids[playerId] ?: grid else grid
+
     fun validSabotageTargetsFor(attackerPlayerId: Int): List<Int> {
-        if (!sabotageEnabled || mode != GameMode.VERSUS) return emptyList()
+        if (!sabotageEnabled || mode == GameMode.CO_OP) return emptyList()
         if (isPlayerEliminated(attackerPlayerId) || isPlayerDisconnected(attackerPlayerId)) {
             return emptyList()
         }
@@ -349,8 +377,9 @@ data class GameState(
     }
 
     fun isSabotaged(playerId: Int, currentTimeMillis: Long): Boolean {
+        if (!sabotageEnabled || mode == GameMode.CO_OP) return false
         val until = sabotageBurstUntilMillis[playerId] ?: 0L
-        return mode == GameMode.VERSUS && currentTimeMillis < until
+        return currentTimeMillis < until
     }
 
     fun teamScore(team: TeamColor): Int {

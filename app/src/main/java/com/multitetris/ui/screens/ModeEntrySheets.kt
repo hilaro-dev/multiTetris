@@ -96,7 +96,11 @@ fun SingleplayerSetupSheet(
     var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
 
     val effectiveMode = if (playWithBot) selectedMode else GameMode.CO_OP
-    val modeAccent = if (effectiveMode == GameMode.VERSUS) NeonMagenta else CyberCyan
+    val modeAccent = when (effectiveMode) {
+        GameMode.CO_OP -> CyberCyan
+        GameMode.VERSUS -> NeonMagenta
+        GameMode.SEPARATE -> ElectricGold
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -190,7 +194,11 @@ fun SingleplayerSetupSheet(
                         onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode, strings) }
                     )
                     Text(
-                        text = if (selectedMode == GameMode.CO_OP) strings.botCoopHint else strings.botVersusHint,
+                        text = when (selectedMode) {
+                            GameMode.CO_OP -> strings.botCoopHint
+                            GameMode.VERSUS -> strings.botVersusHint
+                            GameMode.SEPARATE -> strings.botSeparateHint
+                        },
                         color = TextSecondary,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(horizontal = 4.dp)
@@ -273,8 +281,8 @@ fun SingleplayerSetupSheet(
                 onShowInfo = { activeTooltip = GameInfoCatalog.mysteryMode(strings) }
             )
 
-            // Versus Sabotage Loadout Picker
-            AnimatedVisibility(visible = playWithBot && sabotageEnabled && selectedMode == GameMode.VERSUS) {
+            // Versus / Separate Sabotage Loadout Picker
+            AnimatedVisibility(visible = playWithBot && sabotageEnabled && selectedMode != GameMode.CO_OP) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -430,7 +438,11 @@ fun MultiplayerEntrySheet(
     val strings = LocalStrings.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var activeTooltip by remember { mutableStateOf<InfoTooltipData?>(null) }
-    val modeAccent = if (selectedMode == GameMode.VERSUS) NeonMagenta else CyberCyan
+    val modeAccent = when (selectedMode) {
+        GameMode.CO_OP -> CyberCyan
+        GameMode.VERSUS -> NeonMagenta
+        GameMode.SEPARATE -> ElectricGold
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

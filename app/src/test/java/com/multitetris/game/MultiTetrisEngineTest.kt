@@ -274,10 +274,9 @@ class MultiTetrisEngineTest {
         val afterClear = engine.stepPlayerDown(1, currentTimeMillis = clearTime)
 
         assertEquals(1, afterClear.playerLines[1])
-        assertEquals(clearTime + 500L, afterClear.sabotageBurstUntilMillis[2])
-        assertTrue(afterClear.isSabotaged(2, clearTime + 250L))
-        assertFalse(afterClear.isSabotaged(2, clearTime + 500L))
-        assertEquals(MultiTetrisEngine.SABOTAGE_DROP_INTERVAL_MS, engine.getDropIntervalMs(2, clearTime + 100L))
+        assertNull(afterClear.sabotageBurstUntilMillis[2])
+        assertFalse(afterClear.isSabotaged(2, clearTime + 250L))
+        assertEquals(MultiTetrisEngine.BASE_DROP_INTERVAL_MS, engine.getDropIntervalMs(2, clearTime + 100L))
         assertEquals(MultiTetrisEngine.BASE_DROP_INTERVAL_MS, engine.getDropIntervalMs(1, clearTime + 100L))
     }
 
@@ -381,11 +380,11 @@ class MultiTetrisEngineTest {
 
         val now = 10_000L
         val afterClear = engine.applyAction(1, PlayerAction.HARD_DROP, currentTimeMillis = now)
-        // Teammate P2 must NOT be sabotaged; opponents P3 & P4 must be sabotaged!
+        // Line clears must NEVER trigger automatic sabotage bursts when Sabotage Mode is OFF
         assertFalse(afterClear.isSabotaged(1, now + 100L))
         assertFalse(afterClear.isSabotaged(2, now + 100L))
-        assertTrue(afterClear.isSabotaged(3, now + 100L))
-        assertTrue(afterClear.isSabotaged(4, now + 100L))
+        assertFalse(afterClear.isSabotaged(3, now + 100L))
+        assertFalse(afterClear.isSabotaged(4, now + 100L))
 
         // Now stack P3 spawn zone to row 2 so P3 tops out and declares Team Cyan winner
         val topOutGrid = MutableList(20) { MutableList<LockedCell?>(16) { null } }

@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.Bolt
@@ -99,6 +101,7 @@ fun MatchLobbyScreen(
     socialState: SocialUiState,
     connectedPeerUids: Set<String> = emptySet(),
     onInviteFriend: (SavedFriend) -> Unit,
+    onSetRoomMode: (GameMode) -> Unit = {},
     onSetVersusSubMode: (VersusSubMode) -> Unit = {},
     onSetSabotageEnabled: (Boolean) -> Unit = {},
     onSetMysteryEnabled: (Boolean) -> Unit = {},
@@ -111,14 +114,18 @@ fun MatchLobbyScreen(
     onStartMatch: () -> Unit = {},
     onCancelLobby: () -> Unit
 ) {
-    val modeAccent = if (room.mode == GameMode.VERSUS) NeonMagenta else CyberCyan
+    val modeAccent = when (room.mode) {
+        GameMode.CO_OP -> CyberCyan
+        GameMode.VERSUS -> NeonMagenta
+        GameMode.SEPARATE -> ElectricGold
+    }
     val isHost = room.myRole == MatchRole.HOST
     val resolvedPlayers = room.resolvedPlayers()
     val playerBySlot = resolvedPlayers.associateBy { it.slotIndex }
     val occupiedUids = resolvedPlayers.map { it.uid }.toSet()
     val guestCount = (resolvedPlayers.size - 1).coerceAtLeast(0)
-    val isTwoVTwoActive = room.mode == GameMode.VERSUS && room.versusSubMode == VersusSubMode.TEAMS_2V2
-    val showSabotageDraft = room.mode == GameMode.VERSUS && room.sabotageEnabled
+    val isTwoVTwoActive = room.mode != GameMode.CO_OP && room.versusSubMode == VersusSubMode.TEAMS_2V2
+    val showSabotageDraft = room.mode != GameMode.CO_OP && room.sabotageEnabled
     val myUid = socialState.userProfile.uid
     val mySelectedSabotages = resolvedPlayers.firstOrNull { it.uid == myUid }?.selectedSabotages
         ?: SabotageConfig.defaultLoadout
@@ -145,7 +152,14 @@ fun MatchLobbyScreen(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Header
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Top Header
             Surface(
                 shape = RoundedCornerShape(50),
                 color = modeAccent.copy(alpha = 0.16f),
@@ -218,6 +232,15 @@ fun MatchLobbyScreen(
             }
 
             Spacer(modifier = Modifier.height(10.dp))
+
+            if (isHost) {
+                SegmentedModeToggle(
+                    selectedMode = room.mode,
+                    onSelectMode = onSetRoomMode,
+                    onShowInfo = { mode -> activeTooltip = GameInfoCatalog.forGameMode(mode, strings) }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // 4-Player 2x2 Slot Grid
             Column(
@@ -328,8 +351,8 @@ fun MatchLobbyScreen(
                 }
             }
 
-            // Host-only Teams vs Free-For-All toggle when Versus mode has 3-4 players
-            if (room.mode == GameMode.VERSUS && resolvedPlayers.size >= 3) {
+            // Host-only Teams vs Free-For-All toggle when Versus or Separate mode has 3-4 players
+            if (room.mode != GameMode.CO_OP && resolvedPlayers.size >= 3) {
                 Spacer(modifier = Modifier.height(10.dp))
                 if (isHost) {
                     Surface(
@@ -445,7 +468,7 @@ fun MatchLobbyScreen(
             SabotageModeToggleCard(
                 sabotageEnabled = room.sabotageEnabled,
                 isHost = isHost,
-                isVersus = room.mode == GameMode.VERSUS,
+                isVersus = room.mode != GameMode.CO_OP,
                 onToggle = onSetSabotageEnabled,
                 onShowInfo = { activeTooltip = GameInfoCatalog.sabotageMode(strings) }
             )
@@ -458,9 +481,9 @@ fun MatchLobbyScreen(
                 onShowInfo = { activeTooltip = GameInfoCatalog.mysteryMode(strings) }
             )
 
-            // Versus Loadout Drafting (Pick 2 Sabotages, visible to all when Sabotage Mode is ON)
+            // Competitive Loadout Drafting (Pick 2 Sabotages, visible to all when Sabotage Mode is ON)
             androidx.compose.animation.AnimatedVisibility(
-                visible = room.sabotageEnabled && room.mode == GameMode.VERSUS
+                visible = room.sabotageEnabled && room.mode != GameMode.CO_OP
             ) {
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -476,7 +499,6 @@ fun MatchLobbyScreen(
             if (isHost && resolvedPlayers.size < 4) {
                 Column(
                     modifier = Modifier
-                        .weight(1f)
                         .fillMaxWidth()
                         .padding(top = 10.dp, bottom = 8.dp)
                 ) {
@@ -506,14 +528,11 @@ fun MatchLobbyScreen(
                             )
                         }
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            items(
-                                items = availableFriends,
-                                key = { it.friend.uid }
-                            ) { presence ->
+                            availableFriends.forEach { presence ->
                                 InLobbyFriendInviteRow(
                                     presence = presence,
                                     isInvited = presence.friend.uid in socialState.invitedFriendUids,
@@ -525,7 +544,6 @@ fun MatchLobbyScreen(
                     }
                 }
             } else {
-                Spacer(modifier = Modifier.weight(1f))
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -539,10 +557,13 @@ fun MatchLobbyScreen(
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Text(
-                            text = if (resolvedPlayers.size >= 3) {
-                                "LANDSCAPE MODE AUTO-ENABLED (${resolvedPlayers.size}P • ${if (resolvedPlayers.size == 3) "13×20" else "16×20"} BOARD)"
-                            } else {
-                                "STAR-TOPOLOGY WEBRTC • TURN RELAY ACTIVE"
+                            text = when {
+                                resolvedPlayers.size >= 3 && room.mode != GameMode.SEPARATE ->
+                                    "LANDSCAPE MODE AUTO-ENABLED (${resolvedPlayers.size}P • ${if (resolvedPlayers.size == 3) "13×20" else "16×20"} BOARD)"
+                                room.mode == GameMode.SEPARATE ->
+                                    "PORTRAIT CORNER MINI-BOARDS (${resolvedPlayers.size}P • 10×20 EACH)"
+                                else ->
+                                    "STAR-TOPOLOGY WEBRTC • TURN RELAY ACTIVE"
                             },
                             color = ElectricGold,
                             fontSize = 10.sp,
@@ -561,10 +582,13 @@ fun MatchLobbyScreen(
                     }
                 }
             }
+            }
 
-            // Bottom Actions: Start Match (Host with >= 2 players) + Leave Lobby
+            // Bottom Actions (pinned): Start Match (Host with >= 2 players) + Leave Lobby
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (isHost) {

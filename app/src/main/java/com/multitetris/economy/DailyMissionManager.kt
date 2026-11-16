@@ -47,7 +47,7 @@ class DailyMissionManager(
             when {
                 mission.id == MISSION_WIN_VERSUS &&
                     !mission.isClaimed &&
-                    mode == GameMode.VERSUS &&
+                    mode != GameMode.CO_OP &&
                     didLocalPlayerWin -> {
                     mission.copy(progress = (mission.progress + 1).coerceAtMost(mission.target))
                 }

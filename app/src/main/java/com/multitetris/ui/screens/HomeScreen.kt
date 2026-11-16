@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.People
@@ -204,7 +205,11 @@ fun HomeScreen(
             Spacer(modifier = Modifier.weight(1.1f))
 
             // Primary Action Area: Create Room, Secondary Shop, Subtle Local 2P Test
-            val modeAccent = if (selectedMode == GameMode.VERSUS) NeonMagenta else CyberCyan
+            val modeAccent = when (selectedMode) {
+                GameMode.CO_OP -> CyberCyan
+                GameMode.VERSUS -> NeonMagenta
+                GameMode.SEPARATE -> ElectricGold
+            }
             when (val matchState = socialState.matchmakingState) {
                 is MatchmakingState.Searching -> {
                     Card(
@@ -689,7 +694,7 @@ internal fun SegmentedModeToggle(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(5.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             SegmentedModeOption(
                 modifier = Modifier.weight(1f),
@@ -709,6 +714,15 @@ internal fun SegmentedModeToggle(
                 onClick = { onSelectMode(GameMode.VERSUS) },
                 onInfoClick = { onShowInfo(GameMode.VERSUS) }
             )
+            SegmentedModeOption(
+                modifier = Modifier.weight(1f),
+                title = strings.gameModeLabel(GameMode.SEPARATE),
+                icon = Icons.Rounded.GridView,
+                selected = selectedMode == GameMode.SEPARATE,
+                accent = ElectricGold,
+                onClick = { onSelectMode(GameMode.SEPARATE) },
+                onInfoClick = { onShowInfo(GameMode.SEPARATE) }
+            )
         }
     }
 }
@@ -723,7 +737,6 @@ private fun SegmentedModeOption(
     onClick: () -> Unit,
     onInfoClick: () -> Unit
 ) {
-    val strings = LocalStrings.current
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -733,7 +746,7 @@ private fun SegmentedModeOption(
         border = if (selected) BorderStroke(1.2.dp, accent) else null
     ) {
         Row(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 8.dp),
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -741,21 +754,24 @@ private fun SegmentedModeOption(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (selected) accent else TextSecondary,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(15.dp)
             )
-            Spacer(modifier = Modifier.width(5.dp))
+            Spacer(modifier = Modifier.width(3.dp))
             Text(
                 text = title,
                 color = if (selected) TextPrimary else TextSecondary,
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
+                fontSize = 11.sp,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(2.dp))
             InfoIconButton(
                 contentDescription = "$title Info",
                 tint = if (selected) accent else TextSecondary,
-                iconSize = 14.dp,
-                touchSize = 20.dp,
+                iconSize = 12.dp,
+                touchSize = 16.dp,
                 onClick = onInfoClick
             )
         }

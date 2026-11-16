@@ -96,6 +96,7 @@ data class FriendLivePresence(
             val modeLabel = when (searchingMode) {
                 GameMode.CO_OP -> "Co-op"
                 GameMode.VERSUS -> "Versus"
+                GameMode.SEPARATE -> "Separate"
                 null -> "Match"
             }
             "Searching ($modeLabel)"
